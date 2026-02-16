@@ -25,147 +25,26 @@ let useGPU = false;
 let frameCount = 0;
 let lastFrameTime = performance.now();
 let controls = null;
+let COMPUTE_SHADER = null;
 
-const COMPUTE_SHADER = `
-struct Boid {
-  position: vec4<f32>,
-  velocity: vec4<f32>,
-};
-
-@binding(0) @group(0) var<storage, read_write> boids: array<Boid>;
-
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-  let idx = global_id.x;
-  let total = arrayLength(&boids);
-  if (idx >= total) { return; }
-
-  // Craig Reynolds parameters
-  let separation_dist = 25.0;
-  let align_dist = 50.0;
-  let cohesion_dist = 50.0;
-  let max_speed = 5.0;
-  let max_force = 0.05;
-
-  let separation_weight = 1.5;
-  let alignment_weight = 1.0;
-  let cohesion_weight = 1.0;
-
-  var sep_sum = vec3<f32>(0.0);
-  var align_sum = vec3<f32>(0.0);
-  var coh_sum = vec3<f32>(0.0);
-  var count_sep: u32 = 0u;
-  var count_align: u32 = 0u;
-  var count_coh: u32 = 0u;
-
-  let my_pos = boids[idx].position.xyz;
-  let my_vel = boids[idx].velocity.xyz;
-
-  // Accumulate neighbor info
-  for (var i = 0u; i < total; i = i + 1u) {
-    if (i == idx) { continue; }
-    let other_pos = boids[i].position.xyz;
-    let other_vel = boids[i].velocity.xyz;
-    let dist = distance(my_pos, other_pos);
-
-    if (dist < separation_dist && dist > 0.0) {
-      // stronger repulsion when closer
-      let diff = my_pos - other_pos;
-      sep_sum = sep_sum + (normalize(diff) / dist);
-      count_sep = count_sep + 1u;
+async function loadComputeShader ()
+{
+  try
+  {
+    const response = await fetch( 'compute-shader.wgsl' );
+    if ( !response.ok )
+    {
+      throw new Error( 'Failed to load compute shader: ' + response.statusText );
     }
-
-    if (dist < align_dist && dist > 0.0) {
-      align_sum = align_sum + other_vel;
-      count_align = count_align + 1u;
-    }
-
-    if (dist < cohesion_dist && dist > 0.0) {
-      coh_sum = coh_sum + other_pos;
-      count_coh = count_coh + 1u;
-    }
+    COMPUTE_SHADER = await response.text();
+    console.log( "Compute shader loaded" );
+    return COMPUTE_SHADER;
+  } catch ( e )
+  {
+    console.error( "Error loading compute shader:", e );
+    return null;
   }
-
-  // Steering helpers
-  var steer_sep = vec3<f32>(0.0);
-  if (count_sep > 0u) {
-    let avg = sep_sum / f32(count_sep);
-    if (length(avg) > 0.0) {
-      let desired = normalize(avg) * max_speed;
-      steer_sep = desired - my_vel;
-      if (length(steer_sep) > max_force) {
-        steer_sep = normalize(steer_sep) * max_force;
-      }
-    }
-  }
-
-  var steer_align = vec3<f32>(0.0);
-  if (count_align > 0u) {
-    let avg_vel = align_sum / f32(count_align);
-    if (length(avg_vel) > 0.0) {
-      let desired = normalize(avg_vel) * max_speed;
-      steer_align = desired - my_vel;
-      if (length(steer_align) > max_force) {
-        steer_align = normalize(steer_align) * max_force;
-      }
-    }
-  }
-
-  var steer_coh = vec3<f32>(0.0);
-  if (count_coh > 0u) {
-    let center = coh_sum / f32(count_coh);
-    let to_center = center - my_pos;
-    if (length(to_center) > 0.0) {
-      let desired = normalize(to_center) * max_speed;
-      steer_coh = desired - my_vel;
-      if (length(steer_coh) > max_force) {
-        steer_coh = normalize(steer_coh) * max_force;
-      }
-    }
-  }
-
-  // Combine Reynolds steering forces
-  var accel = steer_sep * separation_weight + steer_align * alignment_weight + steer_coh * cohesion_weight;
-
-  var new_vel = my_vel + accel;
-
-  // Boundary avoidance (steer away when inside margin)
-  let margin = 50.0;
-  let world_max_x = 1000.0;
-  let world_max_y = 600.0;
-  let world_max_z = 600.0;
-  let wall_force = 0.5;
-
-  var avoidance = vec3<f32>(0.0);
-  if ((my_pos.x) < margin) {
-    avoidance.x = (margin - my_pos.x) * wall_force;
-  } else if ((my_pos.x) > (world_max_x - margin)) {
-    avoidance.x = (world_max_x - margin - my_pos.x) * wall_force;
-  }
-  if ((my_pos.y) < margin) {
-    avoidance.y = (margin - my_pos.y) * wall_force;
-  } else if ((my_pos.y) > (world_max_y - margin)) {
-    avoidance.y = (world_max_y - margin - my_pos.y) * wall_force;
-  }
-  if ((my_pos.z) < margin) {
-    avoidance.z = (margin - my_pos.z) * wall_force;
-  } else if ((my_pos.z) > (world_max_z - margin)) {
-    avoidance.z = (world_max_z - margin - my_pos.z) * wall_force;
-  }
-
-  new_vel = new_vel + avoidance;
-
-  // Clamp speed
-  let sp = length(new_vel);
-  if (sp > max_speed) {
-    new_vel = normalize(new_vel) * max_speed;
-  }
-
-  let new_pos = my_pos + new_vel;
-
-  boids[idx].position = vec4<f32>(new_pos, 1.0);
-  boids[idx].velocity = vec4<f32>(new_vel, 1.0);
-}`;
+}
 
 async function initWebGPU ()
 {
@@ -173,6 +52,18 @@ async function initWebGPU ()
   {
     console.log( "Attempting WebGPU initialization..." );
     updateStatus( 'gpu-status', 'Checking...' );
+
+    // Load the compute shader before proceeding
+    if ( !COMPUTE_SHADER )
+    {
+      await loadComputeShader();
+      if ( !COMPUTE_SHADER )
+      {
+        console.error( "Failed to load compute shader" );
+        updateStatus( 'gpu-status', 'CPU Fallback' );
+        return false;
+      }
+    }
 
     const adapter = await navigator.gpu?.requestAdapter();
     if ( !adapter )
@@ -183,7 +74,6 @@ async function initWebGPU ()
     }
 
     gpuDevice = await adapter.requestDevice();
-    const queue = gpuDevice.queue;
     console.log( "Got GPU device" );
 
     const shaderModule = gpuDevice.createShaderModule( {
@@ -288,19 +178,39 @@ async function updateBoidsGPU ()
 }
 
 let readErrorCount = 0;
-async function readBoidsFromGPU ()
+let pendingMapPromise = null;
+let mapRequestFrame = -1;
+
+function requestBoidsReadback ()
 {
-  if ( !gpuDevice || !stagingBuffer )
+  if ( !gpuDevice || !stagingBuffer || pendingMapPromise )
   {
-    if ( readErrorCount++ < 5 ) console.warn( "GPU read skipped: device=" + !!gpuDevice + " buffer=" + !!stagingBuffer );
+    return;
+  }
+
+  // Start async map without awaiting - GPU continues working
+  pendingMapPromise = stagingBuffer.mapAsync( GPUMapMode.READ ).catch( e =>
+  {
+    if ( readErrorCount++ < 5 ) console.error( "GPU map request error:", e );
+    pendingMapPromise = null;
+  } );
+  mapRequestFrame = performance.now();
+}
+
+function tryReadBoidsFromGPU ()
+{
+  if ( !pendingMapPromise )
+  {
     return null;
   }
 
   try
   {
-    await stagingBuffer.mapAsync( GPUMapMode.READ );
+    // Check if map is ready (non-blocking)
     const boidData = new Float32Array( stagingBuffer.getMappedRange() ).slice();
     stagingBuffer.unmap();
+    pendingMapPromise = null;
+    
     if ( readErrorCount > 0 )
     {
       console.log( "GPU read successful, count=" + ( boidData.length / 8 ) + " boids" );
@@ -309,7 +219,7 @@ async function readBoidsFromGPU ()
     return boidData;
   } catch ( e )
   {
-    if ( readErrorCount++ < 5 ) console.error( "GPU read error:", e );
+    // Map not ready yet, will try again next frame
     return null;
   }
 }
@@ -329,7 +239,7 @@ function init ()
     0.1,
     10000
   );
-  camera.position.set( 500, 300, 500 );
+  camera.position.set( -222, 717, 1340 );
   camera.lookAt( 500, 300, 300 );
 
   const container = document.getElementById( 'canvas-container' );
@@ -362,27 +272,36 @@ function init ()
   console.log( "Scene geometry added" );
 
   const coneGeometry = new THREE.ConeGeometry( 2, 6, 8 );
+  coneGeometry.rotateX( Math.PI / 2 ); // Rotate 90° to point forward (negative Z)
   const boidMaterial = new THREE.MeshPhongMaterial( {
     color: 0x00ff88,
     emissive: 0x0088ff,
     shininess: 100
   } );
 
-  for ( let i = 0; i < BOID_COUNT; i++ )
-  {
-    const boid = new THREE.Mesh( coneGeometry, boidMaterial.clone() );
-    boid.castShadow = true;
-    scene.add( boid );
-    boidMeshes.push( boid );
-  }
-  console.log( "Created", BOID_COUNT, "boid meshes" );
+  // Use InstancedMesh for better performance
+  const boidInstancedMesh = new THREE.InstancedMesh( coneGeometry, boidMaterial, BOID_COUNT );
+  boidInstancedMesh.castShadow = true;
+  scene.add( boidInstancedMesh );
+  boidMeshes.push( boidInstancedMesh ); // Keep for compatibility
+  console.log( "Created InstancedMesh with", BOID_COUNT, "boid instances" );
   document.getElementById( 'boid-count' ).textContent = BOID_COUNT;
   document.getElementById( 'debug-init' ).textContent = 'meshes OK';
 
   let simCounter = 0;
   let lastBoidData = null;
+  let prevBoidData = null;
   let firstFrame = true;
   let animateRunCount = 0;
+  const READBACK_FREQUENCY = 2; // Request readback every N frames, read on next frame
+  const velVector = new THREE.Vector3(); // Reuse vector to avoid allocations
+  const matrix = new THREE.Matrix4(); // Reuse matrix for instance updates
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3( 1, 1, 1 ); // Reuse scale vector
+  const dir = new THREE.Vector3(); // Reuse direction vector
+  const prevPos = new THREE.Vector3(); // Reuse previous position vector
+  const zAxis = new THREE.Vector3( 0, 0, 1 ); // Default forward direction
 
   function animate ()
   {
@@ -408,38 +327,55 @@ function init ()
       firstFrame = false;
     }
 
-    // Update simulation every 2 frames
-    simCounter++;
-    if ( simCounter % 2 === 0 && useGPU )
-    {
-      updateBoidsGPU();
-      readBoidsFromGPU().then( data =>
-      {
-        if ( data && boidMeshes.length > 0 )
-        {
-          lastBoidData = data;
-          for ( let i = 0; i < Math.min( BOID_COUNT, boidMeshes.length ); i++ )
-          {
-            const mesh = boidMeshes[ i ];
-            const pos = i * 8;
-            mesh.position.set( data[ pos ], data[ pos + 1 ], data[ pos + 2 ] );
+    updateBoidsGPU();
 
-            const vel = new THREE.Vector3( data[ pos + 4 ], data[ pos + 5 ], data[ pos + 6 ] );
-            if ( vel.length() > 0.1 )
-            {
-              mesh.lookAt(
-                mesh.position.x + vel.x,
-                mesh.position.y + vel.y,
-                mesh.position.z + vel.z
-              );
-            }
-          }
-        }
-      } ).catch( e =>
+    // Asynchronous readback: request on odd frames, read on even frames
+    // This allows GPU to continue working while we wait for data
+    if ( animateRunCount % READBACK_FREQUENCY === 1 )
+    {
+      requestBoidsReadback();
+    } else if ( animateRunCount % READBACK_FREQUENCY === 0 )
+    {
+      const data = tryReadBoidsFromGPU();
+      if ( data && boidMeshes.length > 0 )
       {
-        console.error( "GPU readback error:", e );
-        document.getElementById( 'app-status' ).textContent = 'GPU Error';
-      } );
+        prevBoidData = lastBoidData;
+        lastBoidData = data;
+      }
+    }
+
+    // Update instances every frame using interpolation between last two readbacks
+    if ( lastBoidData && boidMeshes.length > 0 )
+    {
+      const boidInstancedMesh = boidMeshes[ 0 ];
+      const interpolationPhase = (animateRunCount % READBACK_FREQUENCY) / READBACK_FREQUENCY;
+      
+      for ( let i = 0; i < BOID_COUNT; i++ )
+      {
+        const pos = i * 8;
+        position.set( lastBoidData[ pos ], lastBoidData[ pos + 1 ], lastBoidData[ pos + 2 ] );
+        
+        // If we have previous data, interpolate between old and new positions
+        if ( prevBoidData )
+        {
+          prevPos.set( prevBoidData[ pos ], prevBoidData[ pos + 1 ], prevBoidData[ pos + 2 ] );
+          position.lerpVectors( prevPos, position, interpolationPhase );
+        }
+        
+        // Calculate rotation from velocity
+        velVector.set( lastBoidData[ pos + 4 ], lastBoidData[ pos + 5 ], lastBoidData[ pos + 6 ] );
+        if ( velVector.length() > 0.1 )
+        {
+          dir.copy( velVector ).normalize();
+          quaternion.setFromUnitVectors( zAxis, dir );
+        } else {
+          quaternion.identity();
+        }
+        
+        matrix.compose( position, quaternion, scale );
+        boidInstancedMesh.setMatrixAt( i, matrix );
+      }
+      boidInstancedMesh.instanceMatrix.needsUpdate = true;
     }
 
     if ( controls ) controls.update();
