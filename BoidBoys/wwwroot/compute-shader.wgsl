@@ -24,10 +24,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
   
   let separation_weight = 1.5;
   let alignment_weight = 1.0;
-  let cohesion_weight = 1.0;
-
+  let cohesion_weight = .5;  
+  let center_weight = 0.0;
   let world_max = vec3<f32>(1000.0, 600.0, 600.0);
-  let margin = 50.0;
+  let margin = 100.0;
   let turn_factor = 0.2;
 
   var my_pos = vec3<f32>(0.0);
@@ -107,6 +107,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
       let desired = normalize(center - my_pos) * max_speed;
       var steer = desired - my_vel;
       accel += clamp(steer, vec3<f32>(-max_force), vec3<f32>(max_force)) * cohesion_weight;
+    }
+
+
+    let world_center = world_max * 0.5;
+    let to_center = world_center - my_pos;
+    if (length(to_center) > 0.0) {
+      let desired = normalize(to_center) * max_speed;
+      var steer = desired - my_vel;
+      accel += clamp(steer, vec3<f32>(-max_force), vec3<f32>(max_force)) * center_weight;
     }
 
     var wall_accel = vec3<f32>(0.0);

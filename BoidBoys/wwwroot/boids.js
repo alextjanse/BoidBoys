@@ -1,4 +1,4 @@
-const BOID_COUNT = 1000;
+const BOID_COUNT = 15000;
 const WORKGROUP_SIZE = 64;
 const SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
 
@@ -210,7 +210,7 @@ function tryReadBoidsFromGPU ()
     const boidData = new Float32Array( stagingBuffer.getMappedRange() ).slice();
     stagingBuffer.unmap();
     pendingMapPromise = null;
-    
+
     if ( readErrorCount > 0 )
     {
       console.log( "GPU read successful, count=" + ( boidData.length / 8 ) + " boids" );
@@ -275,13 +275,13 @@ function init ()
   coneGeometry.rotateX( Math.PI / 2 ); // Rotate 90° to point forward (negative Z)
   const boidMaterial = new THREE.MeshPhongMaterial( {
     color: 0x00ff88,
-    emissive: 0x0088ff,
     shininess: 100
   } );
 
   // Use InstancedMesh for better performance
   const boidInstancedMesh = new THREE.InstancedMesh( coneGeometry, boidMaterial, BOID_COUNT );
   boidInstancedMesh.castShadow = true;
+
   scene.add( boidInstancedMesh );
   boidMeshes.push( boidInstancedMesh ); // Keep for compatibility
   console.log( "Created InstancedMesh with", BOID_COUNT, "boid instances" );
@@ -348,30 +348,31 @@ function init ()
     if ( lastBoidData && boidMeshes.length > 0 )
     {
       const boidInstancedMesh = boidMeshes[ 0 ];
-      const interpolationPhase = (animateRunCount % READBACK_FREQUENCY) / READBACK_FREQUENCY;
-      
+      const interpolationPhase = ( animateRunCount % READBACK_FREQUENCY ) / READBACK_FREQUENCY;
+
       for ( let i = 0; i < BOID_COUNT; i++ )
       {
         const pos = i * 8;
         position.set( lastBoidData[ pos ], lastBoidData[ pos + 1 ], lastBoidData[ pos + 2 ] );
-        
+
         // If we have previous data, interpolate between old and new positions
         if ( prevBoidData )
         {
           prevPos.set( prevBoidData[ pos ], prevBoidData[ pos + 1 ], prevBoidData[ pos + 2 ] );
           position.lerpVectors( prevPos, position, interpolationPhase );
         }
-        
+
         // Calculate rotation from velocity
         velVector.set( lastBoidData[ pos + 4 ], lastBoidData[ pos + 5 ], lastBoidData[ pos + 6 ] );
         if ( velVector.length() > 0.1 )
         {
           dir.copy( velVector ).normalize();
           quaternion.setFromUnitVectors( zAxis, dir );
-        } else {
+        } else
+        {
           quaternion.identity();
         }
-        
+
         matrix.compose( position, quaternion, scale );
         boidInstancedMesh.setMatrixAt( i, matrix );
       }
@@ -385,7 +386,8 @@ function init ()
     if ( animateRunCount % 60 === 0 )
     {  // Update state display every 60 frames (~1 sec at 60fps)
       document.getElementById( 'debug-state' ).textContent =
-        'GPU:' + ( useGPU ? 'Y' : 'N' ) +
+        'Time:' + animateRunCount / 60 + 's' +
+        ' GPU:' + ( useGPU ? 'Y' : 'N' ) +
         ' Meshes:' + boidMeshes.length +
         ' Dev:' + ( gpuDevice ? '✓' : '-' ) +
         ' Pipe:' + ( computePipeline ? '✓' : '-' );
