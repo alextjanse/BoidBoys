@@ -20,7 +20,7 @@ namespace BoidBoys.src
             Boid[] boids = [.. prev];
             Parallel.For(0, boids.Length, i =>
             {
-                boids[i].velocity.Y += -9.81f;
+                boids[i].velocity += new SteeringBehaviour().CalculateTotalVelocity(boids[i], /*TODO: neighbours*/);
                 boids[i].position += boids[i].velocity;
             });
             return boids;
