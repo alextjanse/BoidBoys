@@ -1,0 +1,162 @@
+﻿@page "/simulation"
+@inject IJSRuntime JS
+
+<h3>Simulation</h3>
+
+<div class="simulation-grid" style="display:flex;gap:1rem;">
+    <div class="controls" style="width:320px;">
+        <fieldset>
+            <legend>Boid Settings</legend>
+            <label>Number of boids
+                <input type="number" min="1" max="20000" @bind="NumBoids" @oninput="OnInputChanged" />
+            </label>
+            <label>Max speed
+                <input type="number" step="0.1" min="0" @bind="MaxSpeed" @oninput="OnInputChanged" />
+            </label>
+            <label>Neighbor radius
+                <input type="number" step="0.1" min="0" @bind="NeighborRadius" @oninput="OnInputChanged" />
+            </label>
+            <label>Cohesion factor
+                <input type="number" step="0.01" min="0" @bind="Cohesion" @oninput="OnInputChanged" />
+            </label>
+            <label>Separation factor
+                <input type="number" step="0.01" min="0" @bind="Separation" @oninput="OnInputChanged" />
+            </label>
+            <label>Alignment factor
+                <input type="number" step="0.01" min="0" @bind="Alignment" @oninput="OnInputChanged" />
+            </label>
+        </fieldset>
+
+        <fieldset style="margin-top:1rem;">
+            <legend>Controls</legend>
+            <button @onclick="ToggleRunning">@((IsRunning) ? "Pause" : "Run")</button>
+            <button @onclick="ResetSimulation">Reset now</button>
+        </fieldset>
+
+        <fieldset style="margin-top:1rem;">
+            <legend>Info</legend>
+            <div>FPS: @FpsString</div>
+            <div>Boids: @ReportedBoids</div>
+            <div>Simulation step: @SimulationStep</div>
+        </fieldset>
+    </div>
+
+    <div class="viewer" style="flex:1; min-height:480px; border:1px solid #ccc; position:relative;">
+        <div id="@ThreeContainerId" style="width:100%; height:100%;"></div>
+    </div>
+</div>
+
+@code {
+    // UI-bound parameters (default values chosen reasonably)
+    private int NumBoids { get; set; } = 300;
+    private float MaxSpeed { get; set; } = 5f;
+    private float NeighborRadius { get; set; } = 3f;
+    private float Cohesion { get; set; } = 0.01f;
+    private float Separation { get; set; } = 0.1f;
+    private float Alignment { get; set; } = 0.125f;
+
+    // runtime state
+    private bool IsRunning { get; set; } = true;
+    private double Fps { get; set; }
+    private string FpsString => Fps <= 0 ? "—" : $"{Fps:0.0}";
+    private int ReportedBoids { get; set; }
+    private long SimulationStep { get; set; }
+
+    private readonly string ThreeContainerId = "threeContainer";
+    private IJSObjectReference? jsModule;
+    private DotNetObjectReference<Simulation>? dotNetRef;
+    private int inputChangeToken;
+    private bool initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dotNetRef = DotNetObjectReference.Create(this);
+            jsModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/boids.js");
+            await jsModule.InvokeVoidAsync("init", ThreeContainerId, GetParamsObject(), dotNetRef);
+            initialized = true;
+        }
+    }
+
+    private object GetParamsObject()
+    {
+        return new
+        {
+            boidCount = NumBoids,
+            maxSpeed = MaxSpeed,
+            neighborRadius = NeighborRadius,
+            cohesion = Cohesion,
+            separation = Separation,
+            alignment = Alignment,
+            running = IsRunning
+        };
+    }
+
+    private async Task ResetSimulation()
+    {
+        if (!initialized || jsModule is null)
+        {
+            return;
+        }
+
+        // reset local reported stats
+        Fps = 0;
+        ReportedBoids = NumBoids;
+        SimulationStep = 0;
+
+        await jsModule.InvokeVoidAsync("reset", GetParamsObject());
+        StateHasChanged();
+    }
+
+    private async Task ToggleRunning()
+    {
+        IsRunning = !IsRunning;
+        if (jsModule is not null)
+        {
+            await jsModule.InvokeVoidAsync("setRunning", IsRunning);
+        }
+    }
+
+    // debounce input changes so rapid typing doesn't thrash the simulation reset
+    private async Task OnInputChanged(ChangeEventArgs e)
+    {
+        inputChangeToken++;
+        var captured = inputChangeToken;
+        await Task.Delay(200);
+        if (captured != inputChangeToken)
+        {
+            return; // newer change arrived
+        }
+
+        await ResetSimulation();
+    }
+
+    [JSInvokable]
+    public Task ReceiveStats(double fps, int boidCount, long step)
+    {
+        Fps = fps;
+        ReportedBoids = boidCount;
+        SimulationStep = step;
+        InvokeAsync(StateHasChanged);
+        return Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (jsModule is not null)
+        {
+            try
+            {
+                await jsModule.InvokeVoidAsync("dispose");
+                await jsModule.DisposeAsync();
+            }
+            catch
+            {
+                // ignore JS disposal errors during unload
+            }
+        }
+
+        dotNetRef?.Dispose();
+    }
+}

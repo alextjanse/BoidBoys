@@ -7,8 +7,4 @@
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Blazor3D" Version="0.1.42" />
-  </ItemGroup>
-
 </Project>
