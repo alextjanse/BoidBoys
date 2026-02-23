@@ -18,50 +18,45 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
   let separation_dist = 25.0;
   let align_dist = 50.0;
   let cohesion_dist = 50.0;
-  
   let max_speed = 5.0;
   let max_force = 0.1;
-  
   let separation_weight = 1.5;
   let alignment_weight = 1.0;
-  let cohesion_weight = .5;  
-  let center_weight = 0.0;
+  let cohesion_weight = 0.5;
   let world_max = vec3<f32>(1000.0, 600.0, 600.0);
   let margin = 100.0;
   let turn_factor = 0.2;
 
-  var my_pos = vec3<f32>(0.0);
-  var my_vel = vec3<f32>(0.0);
-
-  var sep_sum = vec3<f32>(0.0);
-  var align_sum = vec3<f32>(0.0);
-  var coh_sum = vec3<f32>(0.0);
-  var count_sep: u32 = 0u;
-  var count_align: u32 = 0u;
-  var count_coh: u32 = 0u;
+  var my_pos: vec3<f32>;
+  var my_vel: vec3<f32>;
 
   if (idx < total) {
     my_pos = boids[idx].position.xyz;
     my_vel = boids[idx].velocity.xyz;
   }
-  
+
+  var sep_sum = vec3<f32>(0.0);
+  var align_sum = vec3<f32>(0.0);
+  var coh_sum = vec3<f32>(0.0);
+  var count_sep = 0u;
+  var count_align = 0u;
+  var count_coh = 0u;
+
   let num_tiles = (total + 255u) / 256u;
-  for (var tile = 0u; tile < num_tiles; tile = tile + 1u) {
+  for (var tile = 0u; tile < num_tiles; tile++) {
     let tile_start = tile * 256u;
-    let global_neighbor_idx = tile_start + local_idx;
     
-    // All threads cooperatively load a tile into shared memory
-    if (global_neighbor_idx < total) {
-      shared_boids[local_idx] = boids[global_neighbor_idx];
+    // Cooperative load into shared memory
+    if (tile_start + local_idx < total) {
+      shared_boids[local_idx] = boids[tile_start + local_idx];
     }
-    workgroupBarrier(); // ALL threads sync here
-    
-    // Only valid threads do the computation, but all still reach barrier
+    workgroupBarrier();
+
     if (idx < total) {
-      for (var j = 0u; j < 256u; j = j + 1u) {
-        let other_global_idx = tile_start + j;
-        if (other_global_idx >= total || other_global_idx == idx) { continue; }
-        
+      for (var j = 0u; j < 256u; j++) {
+        let other_idx = tile_start + j;
+        if (other_idx >= total || other_idx == idx) { continue; }
+
         let other_pos = shared_boids[j].position.xyz;
         let other_vel = shared_boids[j].velocity.xyz;
         let dist = distance(my_pos, other_pos);
@@ -80,76 +75,38 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
         }
       }
     }
-    workgroupBarrier(); // ALL threads sync here before next tile
+    workgroupBarrier();
   }
 
-  // Only valid threads continue with steering and updates
   if (idx < total) {
     var accel = vec3<f32>(0.0);
 
-    // Separation
     if (count_sep > 0u) {
       let desired = normalize(sep_sum / f32(count_sep)) * max_speed;
-      var steer = desired - my_vel;
-      accel += clamp(steer, vec3<f32>(-max_force), vec3<f32>(max_force)) * separation_weight;
+      accel += clamp(desired - my_vel, vec3<f32>(-max_force), vec3<f32>(max_force)) * separation_weight;
     }
-
-    // Alignment
     if (count_align > 0u) {
       let desired = normalize(align_sum / f32(count_align)) * max_speed;
-      var steer = desired - my_vel;
-      accel += clamp(steer, vec3<f32>(-max_force), vec3<f32>(max_force)) * alignment_weight;
+      accel += clamp(desired - my_vel, vec3<f32>(-max_force), vec3<f32>(max_force)) * alignment_weight;
     }
-
-    // Cohesion
     if (count_coh > 0u) {
       let center = coh_sum / f32(count_coh);
       let desired = normalize(center - my_pos) * max_speed;
-      var steer = desired - my_vel;
-      accel += clamp(steer, vec3<f32>(-max_force), vec3<f32>(max_force)) * cohesion_weight;
-    }
-
-
-    let world_center = world_max * 0.5;
-    let to_center = world_center - my_pos;
-    if (length(to_center) > 0.0) {
-      let desired = normalize(to_center) * max_speed;
-      var steer = desired - my_vel;
-      accel += clamp(steer, vec3<f32>(-max_force), vec3<f32>(max_force)) * center_weight;
+      accel += clamp(desired - my_vel, vec3<f32>(-max_force), vec3<f32>(max_force)) * cohesion_weight;
     }
 
     var wall_accel = vec3<f32>(0.0);
-    
-    // X-axis check
-    if (my_pos.x < margin) { 
-      wall_accel.x += turn_factor; 
-    } else if (my_pos.x > world_max.x - margin) { 
-      wall_accel.x -= turn_factor; 
-    }
-    
-    // Y-axis check
-    if (my_pos.y < margin) { 
-      wall_accel.y += turn_factor; 
-    } else if (my_pos.y > world_max.y - margin) { 
-      wall_accel.y -= turn_factor; 
-    }
-
-    // Z-axis check
-    if (my_pos.z < margin) { 
-      wall_accel.z += turn_factor; 
-    } else if (my_pos.z > world_max.z - margin) { 
-      wall_accel.z -= turn_factor; 
-    }
+    if (my_pos.x < margin) { wall_accel.x += turn_factor; } 
+    else if (my_pos.x > world_max.x - margin) { wall_accel.x -= turn_factor; }
+    if (my_pos.y < margin) { wall_accel.y += turn_factor; } 
+    else if (my_pos.y > world_max.y - margin) { wall_accel.y -= turn_factor; }
+    if (my_pos.z < margin) { wall_accel.z += turn_factor; } 
+    else if (my_pos.z > world_max.z - margin) { wall_accel.z -= turn_factor; }
 
     var new_vel = my_vel + accel + wall_accel;
-
-    // Clamp speed to max_speed
-    if (length(new_vel) > max_speed) {
-      new_vel = normalize(new_vel) * max_speed;
-    }
-
-    var new_pos = my_pos + new_vel;
-    new_pos = clamp(new_pos, vec3<f32>(0.0), world_max);
+    if (length(new_vel) > max_speed) { new_vel = normalize(new_vel) * max_speed; }
+    
+    let new_pos = clamp(my_pos + new_vel, vec3<f32>(0.0), world_max);
 
     boids[idx].position = vec4<f32>(new_pos, 1.0);
     boids[idx].velocity = vec4<f32>(new_vel, 0.0);
