@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>Boids</title>
+  <style>
+    body {
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="canvas-container" style="width:100vw; height:100vh; position:fixed; top:0; left:0; z-index:0;"></div>
+  <div
+    style="position:fixed; top:10px; left:10px; z-index:10; color:#0f0; background:rgba(0,0,0,0.7); padding:10px; border-radius:8px; font-family:monospace; font-size:16px;">
+    <div id="info-app">Initializing...</div>
+    <div id="info-fps">FPS:</div>
+    <div id="info-boids">Boids:</div>
+    <div id="info-step">Step:</div>
+    <div id="info-gpu">GPU:</div>
+    <div id="gpu-status">GPU Status</div>
+  </div>
+  <script type="module" src="/js/boids.js"></script>
+</body>
+
+</html>

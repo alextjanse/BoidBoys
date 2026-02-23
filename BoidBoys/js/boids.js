@@ -1,3 +1,6 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
 const BOID_COUNT = 15000;
 const WORKGROUP_SIZE = 64;
 const SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
@@ -247,7 +250,7 @@ function init ()
   container.appendChild( renderer.domElement );
   console.log( "WebGL renderer created" );
 
-  controls = new THREE.OrbitControls( camera, renderer.domElement );
+  controls = new OrbitControls( camera, renderer.domElement );
   controls.target.set( 500, 300, 300 );
   controls.autoRotate = false;
   controls.autoRotateSpeed = 1;
