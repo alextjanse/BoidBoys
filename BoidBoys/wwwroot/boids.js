@@ -227,8 +227,6 @@ function tryReadBoidsFromGPU ()
 function init ()
 {
   console.log( "init() called, useGPU=", useGPU );
-  document.getElementById( 'app-status' ).textContent = 'Initializing scene...';
-  document.getElementById( 'debug-init' ).textContent = 'running...';
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color( 0x000011 );
@@ -285,10 +283,9 @@ function init ()
   scene.add( boidInstancedMesh );
   boidMeshes.push( boidInstancedMesh ); // Keep for compatibility
   console.log( "Created InstancedMesh with", BOID_COUNT, "boid instances" );
-  document.getElementById( 'boid-count' ).textContent = BOID_COUNT;
-  document.getElementById( 'debug-init' ).textContent = 'meshes OK';
 
   let simCounter = 0;
+  let currentFPS = 0;
   let lastBoidData = null;
   let prevBoidData = null;
   let firstFrame = true;
@@ -312,8 +309,7 @@ function init ()
     const now = performance.now();
     if ( now >= lastFrameTime + 1000 )
     {
-      document.getElementById( 'fps' ).textContent = frameCount;
-      document.getElementById( 'debug-animate' ).textContent = 'run:' + animateRunCount + ' fps:' + frameCount;
+      currentFPS = Math.round( ( frameCount * 1000 ) / ( now - lastFrameTime ) );
       frameCount = 0;
       lastFrameTime = now;
     }
@@ -322,8 +318,6 @@ function init ()
     if ( firstFrame )
     {
       console.log( "First animate frame rendered" );
-      document.getElementById( 'app-status' ).textContent = 'Rendering...';
-      document.getElementById( 'debug-init' ).textContent = 'running OK';
       firstFrame = false;
     }
 
@@ -385,12 +379,10 @@ function init ()
     // Update debug state display
     if ( animateRunCount % 60 === 0 )
     {  // Update state display every 60 frames (~1 sec at 60fps)
-      document.getElementById( 'debug-state' ).textContent =
-        'Time:' + animateRunCount / 60 + 's' +
-        ' GPU:' + ( useGPU ? 'Y' : 'N' ) +
-        ' Meshes:' + boidMeshes.length +
-        ' Dev:' + ( gpuDevice ? '✓' : '-' ) +
-        ' Pipe:' + ( computePipeline ? '✓' : '-' );
+      document.getElementById( 'info-fps' ).textContent = 'FPS:' + currentFPS;
+      document.getElementById( 'info-boids' ).textContent = 'Boids:' + BOID_COUNT;
+      document.getElementById( 'info-step' ).textContent = 'Step:' + animateRunCount;
+      document.getElementById( 'info-gpu' ).textContent = 'GPU:' + ( useGPU ? 'Yes' : 'No' );
     }
   }
 
@@ -426,21 +418,21 @@ window.addEventListener( 'resize', () =>
 
 // Start initialization
 console.log( "=== Boids Application Starting ===" );
-document.getElementById( 'app-status' ).textContent = 'Initializing WebGPU...';
+document.getElementById( 'info-app' ).textContent = 'Initializing WebGPU...';
 
 initWebGPU().then( success =>
 {
   console.log( "WebGPU initialization:", success ? "SUCCESS ✓" : "FAILED - using fallback" );
-  document.getElementById( 'app-status' ).textContent = success ? 'WebGPU Ready' : 'CPU Mode';
+  document.getElementById( 'info-app' ).textContent = success ? 'WebGPU Ready' : 'CPU Mode';
 
   init();
-  document.getElementById( 'app-status' ).textContent = 'Running';
+  document.getElementById( 'info-app' ).textContent = 'Running';
   console.log( "=== Application Ready ===" );
 } ).catch( err =>
 {
   console.error( "FATAL ERROR:", err );
-  document.getElementById( 'app-status' ).textContent = 'ERROR!';
-  document.getElementById( 'gpu-status' ).textContent = 'Error';
+  document.getElementById( 'info-app' ).textContent = 'ERROR!';
+  document.getElementById( 'info-gpu' ).textContent = 'Error';
   try
   {
     init();

@@ -1,74 +1,229 @@
 ﻿@page "/"
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
 <PageTitle>3D Boids - GPU Accelerated</PageTitle>
 
-<div id="canvas-container" style="width: 100%; height: 100vh;"></div>
-<div id="stats"
-     style="position: absolute; top: 10px; left: 10px; color: #00ff88; font-family: monospace; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 5px; z-index: 10;">
-  <div>Boids: <span id="boid-count">-</span></div>
-  <div>FPS: <span id="fps">-</span></div>
-  <div>GPU: <span id="gpu-status">Init...</span></div>
-  <div style="font-size: 0.8em; margin-top: 10px;">
-    <div>Status: <span id="app-status">Loading...</span></div>
-    <div style="margin-top: 5px; color: #88ff00;">
-      Init: <span id="debug-init">pending</span> |
-      Animate: <span id="debug-animate">pending</span> |
-      State: <span id="debug-state">-</span>
+@* UI Structure and Styling strictly from main *@
+<h3>Simulation</h3>
+
+<div class="simulation-grid" style="display:flex;gap:1rem;">
+    <div class="controls" style="width:30vw;height:100vh;overflow:hidden;">
+        <fieldset>
+            <legend>Boid Settings</legend>
+            <label>Number of boids
+                <input type="number" min="1" max="20000" @bind="NumBoids" @oninput="OnInputChanged" />
+            </label>
+            <label>Max speed
+                <input type="number" step="0.1" min="0" @bind="MaxSpeed" @oninput="OnInputChanged" />
+            </label>
+            <label>Neighbor radius
+                <input type="number" step="0.1" min="0" @bind="NeighborRadius" @oninput="OnInputChanged" />
+            </label>
+            <label>Cohesion factor
+                <input type="number" step="0.01" min="0" @bind="Cohesion" @oninput="OnInputChanged" />
+            </label>
+            <label>Separation factor
+                <input type="number" step="0.01" min="0" @bind="Separation" @oninput="OnInputChanged" />
+            </label>
+            <label>Alignment factor
+                <input type="number" step="0.01" min="0" @bind="Alignment" @oninput="OnInputChanged" />
+            </label>
+        </fieldset>
+
+        <fieldset style="margin-top:1rem;">
+            <legend>Controls</legend>
+            <button @onclick="ToggleRunning">@((IsRunning) ? "Pause" : "Run")</button>
+            <button @onclick="ResetSimulation">Reset now</button>
+        </fieldset>
+
+        <fieldset style="margin-top:1rem;">
+            <legend>Info</legend>
+            <div id="info-fps"></div>
+            <div id="info-boids"></div>
+            <div id="info-step"></div>
+            <div id="info-gpu"></div>
+            <div id="info-app"></div>
+        </fieldset>
     </div>
-  </div>
+
+    @* The simulation renders specifically in this div (Requirement) *@
+    <div class="viewer"
+         style="width:70vw;height:100vh;overflow:hidden; border:1px solid #ccc; position:relative; background: #000;">
+        <div id="@ThreeContainerId" style="width:100%; height:100%;">
+
+            @* Load scripts in specific order: Three.js -> Controls -> Your Sim *@
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+            <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+            <div id="canvas-container" style="width: 100%; height: 100%;"></div>
+            <script src="boids.js"></script>
+        </div>
+    </div>
 </div>
 
+@* Logic and Script Integration *@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-<script>
-  window.addEventListener( 'error', function ( event )
-  {
-  console.error( 'Global error:', event.error );
-  document.getElementById( 'app-status' ).textContent = 'ERROR: ' + ( event.error?.message || 'Unknown' );
-  } );
-
-  console.log( '=== Boids App Initialization ===' );
-  console.log( 'THREE.js loaded:', typeof THREE !== 'undefined' );
-  console.log( 'OrbitControls loaded:', typeof THREE.OrbitControls !== 'undefined' );
-  document.getElementById( 'app-status' ).textContent = 'Checking WebGPU...';
-</script>
-<script src="boids.js"></script>
 
 <style>
-  :global(body),
-  :global(html) {
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  background: #000011;
-  font-family: monospace;
-  }
+    /* Global overrides to ensure the layout fits the screen */
+    body,
+    html {
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    }
 
-  :global(.page) {
-  width: 100%;
-  height: 100vh;
-  }
+    .simulation-grid {
+    display: flex;
+    gap: 1rem;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    }
 
-  :global(.sidebar) {
-  display: none;
-  }
+    .controls {
+    width: 30vw;
+    height: 100vh;
+    overflow: hidden;
+    }
 
-  :global(.top-row) {
-  display: none;
-  }
+    .viewer {
+    width: 70vw;
+    height: 100vh;
+    overflow: hidden;
+    min-height: 480px;
+    border: 1px solid #ccc;
+    position: relative;
+    background: #000;
+    }
 
-  :global(main) {
-  width: 100%;
-  height: 100%;
-  }
+    input[type="number"] {
+    display: block;
+    width: 100%;
+    margin-bottom: 0.5rem;
+    }
 
-  :global(.content) {
-  width: 100%;
-  height: 100%;
-  padding: 0 !important;
-  }
-
-  #canvas-container {
-  width: 100%;
-  height: 100%;
-  }
+    label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    }
 </style>
+
+@code {
+    // UI-bound parameters from main
+    private int NumBoids { get; set; } = 300;
+    private float MaxSpeed { get; set; } = 5f;
+    private float NeighborRadius { get; set; } = 3f;
+    private float Cohesion { get; set; } = 0.01f;
+    private float Separation { get; set; } = 0.1f;
+    private float Alignment { get; set; } = 0.125f;
+
+    // Runtime state from main
+    private bool IsRunning { get; set; } = true;
+    private double Fps { get; set; }
+    private string FpsString => Fps <= 0 ? "—" : $"{Fps:0.0}";
+    private int ReportedBoids { get; set; }
+    private long SimulationStep { get; set; }
+
+    // Info panel fields
+    private string GpuStatus { get; set; } = "Init...";
+    private string AppStatus { get; set; } = "Loading...";
+    private string DebugInit { get; set; } = "pending";
+    private string DebugAnimate { get; set; } = "pending";
+    private string DebugState { get; set; } = "-";
+
+    private readonly string ThreeContainerId = "threeContainer";
+    private IJSObjectReference? jsModule;
+    private DotNetObjectReference<Home>? dotNetRef;
+    private int inputChangeToken;
+    private bool initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dotNetRef = DotNetObjectReference.Create(this);
+            jsModule = await JS.InvokeAsync<IJSObjectReference>("import", "/js/boids.js");
+            await jsModule.InvokeVoidAsync("init", ThreeContainerId, GetParamsObject(), dotNetRef);
+            initialized = true;
+        }
+    }
+
+    private object GetParamsObject()
+    {
+        return new
+        {
+            boidCount = NumBoids,
+            maxSpeed = MaxSpeed,
+            neighborRadius = NeighborRadius,
+            cohesion = Cohesion,
+            separation = Separation,
+            alignment = Alignment,
+            running = IsRunning
+        };
+    }
+
+    private async Task ResetSimulation()
+    {
+        if (!initialized || jsModule is null) return;
+
+        Fps = 0;
+        ReportedBoids = NumBoids;
+        SimulationStep = 0;
+
+        await jsModule.InvokeVoidAsync("reset", GetParamsObject());
+        StateHasChanged();
+    }
+
+    private async Task ToggleRunning()
+    {
+        IsRunning = !IsRunning;
+        if (jsModule is not null)
+        {
+            await jsModule.InvokeVoidAsync("setRunning", IsRunning);
+        }
+    }
+
+    private async Task OnInputChanged(ChangeEventArgs e)
+    {
+        inputChangeToken++;
+        var captured = inputChangeToken;
+        await Task.Delay(200);
+        if (captured != inputChangeToken) return;
+
+        await ResetSimulation();
+    }
+
+    [JSInvokable]
+    public void ReceiveStats(double fps, int boidCount, long step, string gpuStatus = null, string appStatus = null, string
+debugInit = null, string debugAnimate = null, string debugState = null)
+    {
+        Fps = fps;
+        ReportedBoids = boidCount;
+        SimulationStep = step;
+        if (gpuStatus != null) GpuStatus = gpuStatus;
+        if (appStatus != null) AppStatus = appStatus;
+        if (debugInit != null) DebugInit = debugInit;
+        if (debugAnimate != null) DebugAnimate = debugAnimate;
+        if (debugState != null) DebugState = debugState;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (jsModule is not null)
+        {
+            try
+            {
+                await jsModule.InvokeVoidAsync("dispose");
+                await jsModule.DisposeAsync();
+            }
+            catch { }
+        }
+        dotNetRef?.Dispose();
+    }
+}
