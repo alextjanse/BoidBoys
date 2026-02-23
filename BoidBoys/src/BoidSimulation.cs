@@ -4,36 +4,75 @@ namespace BoidBoys.src
 {
     public class BoidSimulation
     {
-        private readonly Random rnd = new();
-        public Boid[] Initialize(Vector3 boundingSize)
+        private readonly ThreadLocal<Random> rnd = new(() => new Random(Guid.NewGuid().GetHashCode()));
+
+        private readonly SpatialHash hash;
+        private readonly float neighbourRadius = 5f;
+
+        // reusable buffers (no GC)
+        private Vector3[] positionBuffer = [];
+        private readonly SteeringBehaviour steering = new();
+
+        public BoidSimulation(int maxBoids, float cellSize)
         {
-            Boid[] boids = [];
-            Parallel.For(0, boids.Length, i =>
+            hash = new SpatialHash(cellSize, maxBoids);
+        }
+
+        public Boid[] Initialize(int count, Vector3 boundingSize)
+        {
+            Boid[] boids = new Boid[count];
+
+            Parallel.For(0, count, i =>
             {
-                boids[i].position = RandomVec3() * boundingSize;
+                var r = rnd.Value!;
+                boids[i].position = RandomVec3(r) * boundingSize;
+                boids[i].velocity = Vector3.Zero;
             });
+
             return boids;
         }
 
         public Boid[] Step(Boid[] prev)
         {
-            Boid[] boids = [.. prev];
-            Parallel.For(0, boids.Length, i =>
+            int boidCount = prev.Length;
+            Boid[] boids = (Boid[])prev.Clone();
+
+            if (positionBuffer.Length < boidCount)
             {
-                boids[i].velocity += new SteeringBehaviour().CalculateTotalVelocity(boids[i], /*TODO: neighbours*/);
+                positionBuffer = new Vector3[boidCount];
+            }
+
+            for (int i = 0; i < boidCount; i++)
+            {
+                positionBuffer[i] = prev[i].position;
+            }
+
+            hash.Build(positionBuffer);
+
+            Parallel.For(0, boidCount, i =>
+            {
+                List<int> localNeighbours = hash.Query(positionBuffer, prev[i].position, neighbourRadius);
+
+                Vector3 steer = steering.CalculateTotalVelocity(prev, i, localNeighbours);
+
+                boids[i].velocity += steer;
                 boids[i].position += boids[i].velocity;
             });
+
             return boids;
         }
 
-        private Vector3 RandomVec3()
+        private static Vector3 RandomVec3(Random r)
         {
-            return new Vector3(RandomMinPlus1(), RandomMinPlus1(), RandomMinPlus1());
+            return new Vector3(
+                RandomMinPlus1(r),
+                RandomMinPlus1(r),
+                RandomMinPlus1(r));
         }
 
-        private float RandomMinPlus1()
+        private static float RandomMinPlus1(Random r)
         {
-            return rnd.NextSingle() * 2f - 1f;
+            return r.NextSingle() * 2f - 1f;
         }
     }
 }
