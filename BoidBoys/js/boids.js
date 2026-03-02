@@ -3,7 +3,11 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 let boidCount = 15000;
 const WORKGROUP_SIZE = 256;
-const SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
+let SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
+let boidDensity = 0.000025; // boids per cubic unit
+
+// Base aspect ratio for simulation size
+const BASE_SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
 
 // buffers & pipeline globals so we can rebind when settings change
 let bindGroupLayout, uniformBuffer;
@@ -14,7 +18,34 @@ const paramsArray = new Float32Array(16); // 16 floats = 64 bytes
 //         max_force, sep_w, align_w, coh_w,
 //         margin, turn_factor, padding0, padding1,
 //         world_max.x, world_max.y, world_max.z, world_max.w
+function calculateSimulationSize(count, density) {
+  const baseVolume = BASE_SIMULATION_SIZE.x * BASE_SIMULATION_SIZE.y * BASE_SIMULATION_SIZE.z;
+  const requiredVolume = count / density;
+  const scaleFactor = Math.cbrt(requiredVolume / baseVolume);
+  
+  return {
+    x: BASE_SIMULATION_SIZE.x * scaleFactor,
+    y: BASE_SIMULATION_SIZE.y * scaleFactor,
+    z: BASE_SIMULATION_SIZE.z * scaleFactor
+  };
+}
+
+function updateVisualBounds() {
+  // Remove old visual bounds
+  const oldBox = scene.getObjectByName('boid-bounds');
+  if (oldBox) scene.remove(oldBox);
+  
+  // Create new visual bounds with updated size
+  const boxGeom = new THREE.BoxGeometry( SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z );
+  const edges = new THREE.EdgesGeometry( boxGeom );
+  const line = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x444444 } ) );
+  line.name = 'boid-bounds';
+  line.position.set( SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2 );
+  scene.add( line );
+}
+
 function resetParamsToDefaults() {
+  SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
   paramsArray[0] = 25.0; // separation_dist
   paramsArray[1] = 50.0; // align_dist
   paramsArray[2] = 50.0; // cohesion_dist
@@ -154,7 +185,8 @@ function initThree ()
   const boxGeom = new THREE.BoxGeometry( SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z );
   const edges = new THREE.EdgesGeometry( boxGeom );
   const line = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x444444 } ) );
-  line.position.set( 500, 300, 300 );
+  line.name = 'boid-bounds';
+  line.position.set( SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2 );
   scene.add( line );
 
   // Boids mesh
@@ -185,8 +217,12 @@ function createInstancedMesh() {
 
 function recreateBoids(newCount) {
   boidCount = newCount;
+  SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
+  resetParamsToDefaults();
+  
   initBoidBuffers(boidCount);
   createInstancedMesh();
+  updateVisualBounds();
   
   // Rebind the new buffer to the compute pipeline
   bindGroup = gpuDevice.createBindGroup( {
@@ -223,6 +259,7 @@ function updateUniforms() {
 function initUI() {
   // populate inputs with current defaults
   document.getElementById('boid-count').value = boidCount;
+  document.getElementById('boid-density').value = boidDensity.toFixed(6);
   document.getElementById('separation').value = paramsArray[0];
   document.getElementById('align').value = paramsArray[1];
   document.getElementById('cohesion').value = paramsArray[2];
@@ -238,6 +275,17 @@ function initUI() {
     const n = parseInt(e.target.value);
     if (!isNaN(n) && n > 0) {
       recreateBoids(n);
+    }
+  });
+
+  document.getElementById('boid-density').addEventListener('input', e => {
+    const d = parseFloat(e.target.value);
+    if (!isNaN(d) && d > 0) {
+      boidDensity = d;
+      SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
+      resetParamsToDefaults();
+      updateVisualBounds();
+      gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
     }
   });
 
@@ -258,6 +306,24 @@ function initUI() {
     isSimulationRunning = !isSimulationRunning;
     updateStartPauseButton();
   });
+  
+  // Restart button
+  document.getElementById('restart-btn').addEventListener('click', () => {
+    initBoidBuffers(boidCount);
+    createInstancedMesh();
+    bindGroup = gpuDevice.createBindGroup( {
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: boidBuffer } },
+        { binding: 1, resource: { buffer: uniformBuffer } }
+      ]
+    } );
+    isSimulationRunning = true;
+    updateStartPauseButton();
+  });
+  
+  // Reset button
+  document.getElementById('reset-btn').addEventListener('click', resetSimulation);
   
   updateStartPauseButton();
 }
@@ -322,9 +388,40 @@ function frame ()
 
 function updateStartPauseButton() {
   const btn = document.getElementById('start-pause-btn');
-  btn.textContent = isSimulationRunning ? 'Pause' : 'Start';
-  btn.classList.toggle('btn-success', isSimulationRunning);
-  btn.classList.toggle('btn-warning', !isSimulationRunning);
+  const icon = document.getElementById('start-icon');
+  if (isSimulationRunning) {
+    icon.className = 'bi bi-pause-fill';
+    btn.classList.add('btn-success');
+    btn.classList.remove('btn-warning');
+  } else {
+    icon.className = 'bi bi-play-fill';
+    btn.classList.add('btn-warning');
+    btn.classList.remove('btn-success');
+  }
+}
+
+function resetSimulation() {
+  boidCount = 15000;
+  boidDensity = 0.00005;
+  SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
+  resetParamsToDefaults();
+  recreateBoids(boidCount);
+  
+  // Update UI inputs to reflect defaults
+  document.getElementById('boid-count').value = boidCount;
+  document.getElementById('boid-density').value = boidDensity.toFixed(6);
+  document.getElementById('separation').value = paramsArray[0];
+  document.getElementById('align').value = paramsArray[1];
+  document.getElementById('cohesion').value = paramsArray[2];
+  document.getElementById('max_speed').value = paramsArray[3];
+  document.getElementById('max_force').value = paramsArray[4];
+  document.getElementById('sep_weight').value = paramsArray[5];
+  document.getElementById('align_weight').value = paramsArray[6];
+  document.getElementById('coh_weight').value = paramsArray[7];
+  document.getElementById('margin').value = paramsArray[8];
+  document.getElementById('turn_factor').value = paramsArray[9];
+  
+  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
 }
 
 initWebGPU().then( () =>
