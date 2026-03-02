@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-const BOID_COUNT = 15000;
+const BOID_COUNT = 100000;
 const WORKGROUP_SIZE = 256;
 const SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
 
@@ -9,6 +9,9 @@ let scene, camera, renderer, boidInstancedMesh, controls;
 let gpuDevice, computePipeline, boidBuffer, stagingBuffer, kdTreeBuffer, bindGroup;
 let useGPU = false;
 let isMapping = false;
+
+let frames = 0;
+let prevTime = performance.now();
 
 const KD_NODE_INTS = 4;
 let kdIndices, kdNodes, boidDataCopy, pendingKDTree;
@@ -131,6 +134,8 @@ function initThree()
   boidInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   scene.add(boidInstancedMesh);
 
+  document.getElementById('info-boids').innerText = `Boids: ${BOID_COUNT}`;
+
   scene.add(new THREE.DirectionalLight(0xffffff, 1), new THREE.AmbientLight(0xffffff, 0.3));
 
   window.addEventListener('resize', () =>
@@ -210,6 +215,16 @@ function frame()
 {
   requestAnimationFrame(frame);
 
+  const time = performance.now();
+  frames++;
+
+  if (time - prevTime >= 1000) {
+    const fps = Math.round((frames * 1000) / (time - prevTime));
+    document.getElementById('info-fps').innerText = `FPS: ${fps}`;
+    frames = 0;
+    prevTime = time;
+  }
+
   // Always update controls so the camera movement is fluid
   if (controls) controls.update();
 
@@ -257,6 +272,8 @@ function frame()
     }).catch(() => { isMapping = false; });
   }
 
+  document.getElementById('info-gpu').innerText = `GPU: ${useGPU ? "Yes" : "No"}`;
+  document.getElementById('info-step').innerText = `Step: ${0}`;
   renderer.render(scene, camera);
 }
 
