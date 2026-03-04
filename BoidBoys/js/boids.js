@@ -1,431 +1,407 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-let boidCount = 15000;
+// ───── Simulation constants ─────
+const BOID_COUNT = 100000;
 const WORKGROUP_SIZE = 256;
-let SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
-let boidDensity = 0.000025; // boids per cubic unit
+const SIMULATION_SIZE = { x: 5000, y: 5000, z: 5000 };
 
-// Base aspect ratio for simulation size
-const BASE_SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
+// Spatial-hash grid (must match shader constants)
+const CELL_SIZE = 50;
+const GRID_X = Math.ceil(SIMULATION_SIZE.x / CELL_SIZE); // 20
+const GRID_Y = Math.ceil(SIMULATION_SIZE.y / CELL_SIZE); // 12
+const GRID_Z = Math.ceil(SIMULATION_SIZE.z / CELL_SIZE); // 12
+const NUM_CELLS = GRID_X * GRID_Y * GRID_Z;             // 2 880
 
-// buffers & pipeline globals so we can rebind when settings change
-let bindGroupLayout, uniformBuffer;
+// ───── Three.js state ─────
+let scene, camera, renderer, controls;
+let boidMesh, boidInterleavedBuffer;
 
-// Create a small uniform buffer holding global scene/simulation parameters
-const paramsArray = new Float32Array(16); // 16 floats = 64 bytes
-// layout: separation, align, cohesion, max_speed,
-//         max_force, sep_w, align_w, coh_w,
-//         margin, turn_factor, padding0, padding1,
-//         world_max.x, world_max.y, world_max.z, world_max.w
-function calculateSimulationSize(count, density) {
-  const baseVolume = BASE_SIMULATION_SIZE.x * BASE_SIMULATION_SIZE.y * BASE_SIMULATION_SIZE.z;
-  const requiredVolume = count / density;
-  const scaleFactor = Math.cbrt(requiredVolume / baseVolume);
-  
-  return {
-    x: BASE_SIMULATION_SIZE.x * scaleFactor,
-    y: BASE_SIMULATION_SIZE.y * scaleFactor,
-    z: BASE_SIMULATION_SIZE.z * scaleFactor
-  };
-}
-
-function updateVisualBounds() {
-  // Remove old visual bounds
-  const oldBox = scene.getObjectByName('boid-bounds');
-  if (oldBox) scene.remove(oldBox);
-  
-  // Create new visual bounds with updated size
-  const boxGeom = new THREE.BoxGeometry( SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z );
-  const edges = new THREE.EdgesGeometry( boxGeom );
-  const line = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x444444 } ) );
-  line.name = 'boid-bounds';
-  line.position.set( SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2 );
-  scene.add( line );
-}
-
-function resetParamsToDefaults() {
-  SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
-  paramsArray[0] = 25.0; // separation_dist
-  paramsArray[1] = 50.0; // align_dist
-  paramsArray[2] = 50.0; // cohesion_dist
-  paramsArray[3] = 5.0;  // max_speed
-  paramsArray[4] = 0.1;  // max_force
-  paramsArray[5] = 1.5;  // separation_weight
-  paramsArray[6] = 1.0;  // alignment_weight
-  paramsArray[7] = 0.5;  // cohesion_weight
-  paramsArray[8] = 100.0; // margin
-  paramsArray[9] = 0.2;   // turn_factor
-  paramsArray[10] = 0.0;  // padding0
-  paramsArray[11] = 0.0;  // padding1
-  paramsArray[12] = SIMULATION_SIZE.x;
-  paramsArray[13] = SIMULATION_SIZE.y;
-  paramsArray[14] = SIMULATION_SIZE.z;
-  paramsArray[15] = 0.0;
-}
-resetParamsToDefaults();
-
-let scene, camera, renderer, boidInstancedMesh, controls;
-let gpuDevice, computePipeline, boidBuffer, stagingBuffer, bindGroup;
+// ───── WebGPU state ─────
+let gpuDevice;
+let clearCountsPipeline, countBoidsPipeline, prefixSumPipeline, scatterPipeline, updateBoidsPipeline;
+let boidBuffer, hashBuffer, cellCountBuffer, cellStartBuffer, cellEndBuffer;
+let clearCountsBG, countBoidsBG, prefixSumBG, scatterBG, updateBoidsBG;
+let stagingBuffers = [];
+let stagingMapped = [false, false];
+let currentStaging = 0;
 let useGPU = false;
-let isMapping = false;
-let isSimulationRunning = true;
-let lastFrameTime = 0;
 
-// Pre-allocate math objects to save memory and CPU cycles
-const _matrix = new THREE.Matrix4();
-const _pos = new THREE.Vector3();
-const _orient = new THREE.Quaternion();
-const _vel = new THREE.Vector3();
-const _up = new THREE.Vector3( 0, 0, 1 );
+// ───── HUD / diagnostics ─────
+let infoAppEl, infoFpsEl, infoBoidsEl, infoStepEl, infoGpuEl, gpuStatusEl;
+let lastTime = performance.now();
+let fps = 0;
+const FPS_SMOOTHING = 0;
+// Framerate cap: keep renders at or below 60Hz
+let lastRenderTime = performance.now();
+const MAX_FPS = 60;
+const FRAME_INTERVAL = 1000 / MAX_FPS;
+let stepCount = 0;
+let gpuAdapter = null;
+// Update the visible FPS only every N frames to avoid rapid jumps
+const FPS_DISPLAY_INTERVAL_FRAMES = 60;
+let framesSinceFpsUpdate = 0;
+let displayedFps = 0;
 
-function initBoidBuffers(count) {
-  const boidData = new Float32Array( count * 8 );
-  for ( let i = 0; i < count; i++ )
-  {
-    boidData[ i * 8 ] = Math.random() * SIMULATION_SIZE.x;
-    boidData[ i * 8 + 1 ] = Math.random() * SIMULATION_SIZE.y;
-    boidData[ i * 8 + 2 ] = Math.random() * SIMULATION_SIZE.z;
-    boidData[ i * 8 + 3 ] = 1.0;
-    boidData[ i * 8 + 4 ] = ( Math.random() - 0.5 ) * 4;
-    boidData[ i * 8 + 5 ] = ( Math.random() - 0.5 ) * 4;
-    boidData[ i * 8 + 6 ] = ( Math.random() - 0.5 ) * 4;
-    boidData[ i * 8 + 7 ] = 0.0;
+// ═══════════════════════════════════════════════════════════════
+//  WebGPU initialisation — counting-sort spatial-hash pipeline
+// ═══════════════════════════════════════════════════════════════
+async function initWebGPU()
+{
+  const adapter = await navigator.gpu?.requestAdapter();
+  if (!adapter) {
+    const el = document.getElementById('info-app');
+    if (el) el.innerText = 'WebGPU not supported';
+    return false;
   }
+  gpuAdapter = adapter;
+  gpuDevice = await adapter.requestDevice({
+    requiredLimits: {
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+      maxBufferSize: adapter.limits.maxBufferSize,
+    },
+  });
 
-  boidBuffer = gpuDevice.createBuffer( {
+  // ── Load shader module (all 5 entry points in one file) ──
+  const shaderCode = await fetch('compute-shader.wgsl').then(r => r.text());
+  const shaderModule = gpuDevice.createShaderModule({ code: shaderCode });
+
+  // ── 1. Boid buffer (position + velocity, 8 floats each) ──
+  const boidData = new Float32Array(BOID_COUNT * 8);
+  for (let i = 0; i < BOID_COUNT; i++) {
+    boidData[i * 8 + 0] = Math.random() * SIMULATION_SIZE.x;
+    boidData[i * 8 + 1] = Math.random() * SIMULATION_SIZE.y;
+    boidData[i * 8 + 2] = Math.random() * SIMULATION_SIZE.z;
+    boidData[i * 8 + 3] = 1.0;
+    boidData[i * 8 + 4] = (Math.random() - 0.5) * 4;
+    boidData[i * 8 + 5] = (Math.random() - 0.5) * 4;
+    boidData[i * 8 + 6] = (Math.random() - 0.5) * 4;
+    boidData[i * 8 + 7] = 0.0;
+  }
+  boidBuffer = gpuDevice.createBuffer({
     size: boidData.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
-  } );
-  new Float32Array( boidBuffer.getMappedRange() ).set( boidData );
+  });
+  new Float32Array(boidBuffer.getMappedRange()).set(boidData);
   boidBuffer.unmap();
 
-  stagingBuffer = gpuDevice.createBuffer( {
-    size: boidData.byteLength,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  } );
-}
+  // ── 2. Hash-entry buffer (exactly BOID_COUNT — no padding with counting sort) ──
+  hashBuffer = gpuDevice.createBuffer({
+    size: BOID_COUNT * 8, // struct HashEntry { cell_hash: u32, boid_index: u32 }
+    usage: GPUBufferUsage.STORAGE,
+  });
 
-async function initWebGPU ()
-{
-  const adapter = await navigator.gpu?.requestAdapter();
-  if ( !adapter )
-  {
-    document.getElementById( 'info-app' ).innerText = "WebGPU not supported";
-    return false;
-  }
-  gpuDevice = await adapter.requestDevice();
+  // ── 3. Cell count buffer (atomic counters, 2880 cells) ──
+  cellCountBuffer = gpuDevice.createBuffer({
+    size: NUM_CELLS * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
 
-  const shaderCode = await fetch( 'compute-shader.wgsl' ).then( r => r.text() );
-  const shaderModule = gpuDevice.createShaderModule( { code: shaderCode } );
+  // ── 4. Cell start buffer (prefix-sum result) ──
+  cellStartBuffer = gpuDevice.createBuffer({
+    size: NUM_CELLS * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
 
+  // ── 5. Cell end buffer (scatter offset → becomes cell_end after scatter) ──
+  cellEndBuffer = gpuDevice.createBuffer({
+    size: NUM_CELLS * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
 
-  initBoidBuffers(boidCount);
+  // ── 6. Double-buffered staging buffers (avoids GPU stalls on readback) ──
+  const stagingSize = boidData.byteLength;
+  stagingBuffers = [
+    gpuDevice.createBuffer({ size: stagingSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }),
+    gpuDevice.createBuffer({ size: stagingSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }),
+  ];
 
-  // uniform buffer (reuse if already created)
-  if (!uniformBuffer) {
-    uniformBuffer = gpuDevice.createBuffer({
-      size: paramsArray.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-  }
-  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
+  // ════════════════ Compute pipelines (auto layout) ════════════════
 
-  bindGroupLayout = gpuDevice.createBindGroupLayout( {
+  clearCountsPipeline = gpuDevice.createComputePipeline({
+    layout: 'auto',
+    compute: { module: shaderModule, entryPoint: 'clear_counts' },
+  });
+
+  countBoidsPipeline = gpuDevice.createComputePipeline({
+    layout: 'auto',
+    compute: { module: shaderModule, entryPoint: 'count_boids' },
+  });
+
+  prefixSumPipeline = gpuDevice.createComputePipeline({
+    layout: 'auto',
+    compute: { module: shaderModule, entryPoint: 'prefix_sum' },
+  });
+
+  scatterPipeline = gpuDevice.createComputePipeline({
+    layout: 'auto',
+    compute: { module: shaderModule, entryPoint: 'scatter' },
+  });
+
+  updateBoidsPipeline = gpuDevice.createComputePipeline({
+    layout: 'auto',
+    compute: { module: shaderModule, entryPoint: 'update_boids' },
+  });
+
+  // ════════════════ Bind groups ════════════════
+
+  // clear_counts → binding 2
+  clearCountsBG = gpuDevice.createBindGroup({
+    layout: clearCountsPipeline.getBindGroupLayout(0),
     entries: [
-      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }
-    ]
-  } );
+      { binding: 2, resource: { buffer: cellCountBuffer } },
+    ],
+  });
 
-  bindGroup = gpuDevice.createBindGroup( {
-    layout: bindGroupLayout,
+  // count_boids → bindings 0, 2
+  countBoidsBG = gpuDevice.createBindGroup({
+    layout: countBoidsPipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: boidBuffer } },
-      { binding: 1, resource: { buffer: uniformBuffer } }
-    ]
-  } );
+      { binding: 2, resource: { buffer: cellCountBuffer } },
+    ],
+  });
 
-  computePipeline = gpuDevice.createComputePipeline( {
-    layout: gpuDevice.createPipelineLayout( { bindGroupLayouts: [ bindGroupLayout ] } ),
-    compute: { module: shaderModule, entryPoint: 'main' }
-  } );
+  // prefix_sum → bindings 2, 3, 4
+  prefixSumBG = gpuDevice.createBindGroup({
+    layout: prefixSumPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 2, resource: { buffer: cellCountBuffer } },
+      { binding: 3, resource: { buffer: cellStartBuffer } },
+      { binding: 4, resource: { buffer: cellEndBuffer } },
+    ],
+  });
 
-  // after pipeline ready we can initialize UI handlers
-  initUI();
+  // scatter → bindings 0, 1, 4
+  scatterBG = gpuDevice.createBindGroup({
+    layout: scatterPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: boidBuffer } },
+      { binding: 1, resource: { buffer: hashBuffer } },
+      { binding: 4, resource: { buffer: cellEndBuffer } },
+    ],
+  });
+
+  // update_boids → bindings 0, 1, 3, 4
+  updateBoidsBG = gpuDevice.createBindGroup({
+    layout: updateBoidsPipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: boidBuffer } },
+      { binding: 1, resource: { buffer: hashBuffer } },
+      { binding: 3, resource: { buffer: cellStartBuffer } },
+      { binding: 4, resource: { buffer: cellEndBuffer } },
+    ],
+  });
 
   useGPU = true;
-  document.getElementById( 'info-app' ).innerText = "WebGPU Running";
+  const infoApp = document.getElementById('info-app');
+  if (infoApp) infoApp.innerText = 'WebGPU Running (Counting Sort)';
+  if (gpuStatusEl) gpuStatusEl.innerText = gpuAdapter?.name ?? 'WebGPU Adapter';
+  if (infoGpuEl) infoGpuEl.innerText = 'Yes';
   return true;
 }
 
-function initThree ()
+function initThree()
 {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color( 0x000005 );
+  scene.background = new THREE.Color(0x000005);
 
-  camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 10000 );
-  camera.position.set( -500, 600, 1000 );
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 10000);
+  camera.position.set(-500, 600, 1000);
 
-  renderer = new THREE.WebGLRenderer( { antialias: true } );
-  renderer.setSize( window.innerWidth, window.innerHeight );
-  renderer.setPixelRatio( window.devicePixelRatio );
+  renderer = new THREE.WebGLRenderer({ antialias: false }); // AA off for perf at high counts
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // cap DPR
 
   // FIX: Append to the specific container, not the body!
-  const container = document.getElementById( 'canvas-container' );
-  container.appendChild( renderer.domElement );
+  const container = document.getElementById('canvas-container');
+  container.appendChild(renderer.domElement);
 
-  controls = new OrbitControls( camera, renderer.domElement );
-  controls.target.set( 500, 300, 300 );
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(500, 300, 300);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
 
   // Visual Bounds
-  const boxGeom = new THREE.BoxGeometry( SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z );
-  const edges = new THREE.EdgesGeometry( boxGeom );
-  const line = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x444444 } ) );
-  line.name = 'boid-bounds';
-  line.position.set( SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2 );
-  scene.add( line );
+  const boxGeom = new THREE.BoxGeometry(SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z);
+  const edges = new THREE.EdgesGeometry(boxGeom);
+  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
+  line.position.set(500, 300, 300);
+  scene.add(line);
 
-  // Boids mesh
-  createInstancedMesh();
+  // Boids — InstancedBufferGeometry + custom shader (orientation on GPU, zero CPU math)
+  const coneGeo = new THREE.ConeGeometry(2, 6, 3); // 3 segments for lower vertex count
+  coneGeo.rotateX(Math.PI / 2); // tip along +Z
+  const instancedGeo = new THREE.InstancedBufferGeometry();
+  instancedGeo.index = coneGeo.index;
+  instancedGeo.setAttribute('position', coneGeo.getAttribute('position'));
+  instancedGeo.setAttribute('normal', coneGeo.getAttribute('normal'));
+  instancedGeo.instanceCount = BOID_COUNT;
 
-  scene.add( new THREE.DirectionalLight( 0xffffff, 1 ), new THREE.AmbientLight( 0xffffff, 0.3 ) );
+  // Interleaved instance buffer — layout matches GPU boid struct [pos.xyzw, vel.xyzw]
+  boidInterleavedBuffer = new THREE.InstancedInterleavedBuffer(
+    new Float32Array(BOID_COUNT * 8), 8
+  );
+  boidInterleavedBuffer.setUsage(THREE.DynamicDrawUsage);
+  instancedGeo.setAttribute('boidPos', new THREE.InterleavedBufferAttribute(boidInterleavedBuffer, 3, 0));
+  instancedGeo.setAttribute('boidVel', new THREE.InterleavedBufferAttribute(boidInterleavedBuffer, 3, 4));
 
-  window.addEventListener( 'resize', () =>
+  const boidMaterial = new THREE.ShaderMaterial({
+    vertexShader: /* glsl */`
+      attribute vec3 boidPos;
+      attribute vec3 boidVel;
+      varying vec3 vNormal;
+
+      void main() {
+        // Orient cone tip along velocity
+        vec3 dir = length(boidVel) > 0.01 ? normalize(boidVel) : vec3(0.0, 0.0, 1.0);
+        vec3 worldUp = abs(dir.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+        vec3 right = normalize(cross(worldUp, dir));
+        vec3 up = cross(dir, right);
+        mat3 rot = mat3(right, up, dir);
+
+        vec3 transformed = rot * position + boidPos;
+        vNormal = normalMatrix * (rot * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */`
+      varying vec3 vNormal;
+
+      void main() {
+        vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
+        float diff = max(dot(normalize(vNormal), lightDir), 0.0);
+        vec3 col = vec3(0.0, 1.0, 0.533) * (0.3 + 0.7 * diff);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+    side: THREE.DoubleSide,
+  });
+
+  boidMesh = new THREE.Mesh(instancedGeo, boidMaterial);
+  boidMesh.frustumCulled = false;
+  scene.add(boidMesh);
+
+  scene.add(new THREE.DirectionalLight(0xffffff, 1), new THREE.AmbientLight(0xffffff, 0.3));
+
+  // Wire HUD elements (they exist in the page)
+  infoAppEl = document.getElementById('info-app');
+  infoFpsEl = document.getElementById('info-fps');
+  infoBoidsEl = document.getElementById('info-boids');
+  infoStepEl = document.getElementById('info-step');
+  infoGpuEl = document.getElementById('info-gpu');
+  gpuStatusEl = document.getElementById('gpu-status');
+
+  if (infoBoidsEl) infoBoidsEl.innerText = `Boids: ${BOID_COUNT}`;
+  if (infoGpuEl) infoGpuEl.innerText = useGPU ? 'Yes' : 'No';
+  if (gpuStatusEl && gpuAdapter) gpuStatusEl.innerText = gpuAdapter.name || 'WebGPU Adapter';
+
+  window.addEventListener('resize', () =>
   {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize( window.innerWidth, window.innerHeight );
-  } );
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
 }
 
-function createInstancedMesh() {
-  if (boidInstancedMesh) {
-    scene.remove(boidInstancedMesh);
-    boidInstancedMesh.geometry.dispose();
-    boidInstancedMesh.material.dispose();
-  }
-  const geometry = new THREE.ConeGeometry( 2, 6, 5 ).rotateX( Math.PI / 2 );
-  const material = new THREE.MeshPhongMaterial( { color: 0x00ff88 } );
-  boidInstancedMesh = new THREE.InstancedMesh( geometry, material, boidCount );
-  boidInstancedMesh.instanceMatrix.setUsage( THREE.DynamicDrawUsage );
-  scene.add( boidInstancedMesh );
-}
-
-function recreateBoids(newCount) {
-  boidCount = newCount;
-  SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
-  resetParamsToDefaults();
-  
-  initBoidBuffers(boidCount);
-  createInstancedMesh();
-  updateVisualBounds();
-  
-  // Rebind the new buffer to the compute pipeline
-  bindGroup = gpuDevice.createBindGroup( {
-    layout: bindGroupLayout,
-    entries: [
-      { binding: 0, resource: { buffer: boidBuffer } },
-      { binding: 1, resource: { buffer: uniformBuffer } }
-    ]
-  } );
-  
-  isSimulationRunning = true;
-  updateStartPauseButton();
-}
-
-function updateUniforms() {
-  // read each field from UI inputs (IDs match below)
-  paramsArray[0] = parseFloat(document.getElementById('separation').value);
-  paramsArray[1] = parseFloat(document.getElementById('align').value);
-  paramsArray[2] = parseFloat(document.getElementById('cohesion').value);
-  paramsArray[3] = parseFloat(document.getElementById('max_speed').value);
-  paramsArray[4] = parseFloat(document.getElementById('max_force').value);
-  paramsArray[5] = parseFloat(document.getElementById('sep_weight').value);
-  paramsArray[6] = parseFloat(document.getElementById('align_weight').value);
-  paramsArray[7] = parseFloat(document.getElementById('coh_weight').value);
-  paramsArray[8] = parseFloat(document.getElementById('margin').value);
-  paramsArray[9] = parseFloat(document.getElementById('turn_factor').value);
-  // world_max remains static from SIMULATION_SIZE
-  paramsArray[12] = SIMULATION_SIZE.x;
-  paramsArray[13] = SIMULATION_SIZE.y;
-  paramsArray[14] = SIMULATION_SIZE.z;
-  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
-}
-
-function initUI() {
-  // populate inputs with current defaults
-  document.getElementById('boid-count').value = boidCount;
-  document.getElementById('boid-density').value = boidDensity.toFixed(6);
-  document.getElementById('separation').value = paramsArray[0];
-  document.getElementById('align').value = paramsArray[1];
-  document.getElementById('cohesion').value = paramsArray[2];
-  document.getElementById('max_speed').value = paramsArray[3];
-  document.getElementById('max_force').value = paramsArray[4];
-  document.getElementById('sep_weight').value = paramsArray[5];
-  document.getElementById('align_weight').value = paramsArray[6];
-  document.getElementById('coh_weight').value = paramsArray[7];
-  document.getElementById('margin').value = paramsArray[8];
-  document.getElementById('turn_factor').value = paramsArray[9];
-
-  document.getElementById('boid-count').addEventListener('change', e => {
-    const n = parseInt(e.target.value);
-    if (!isNaN(n) && n > 0) {
-      recreateBoids(n);
-    }
-  });
-
-  document.getElementById('boid-density').addEventListener('input', e => {
-    const d = parseFloat(e.target.value);
-    if (!isNaN(d) && d > 0) {
-      boidDensity = d;
-      SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
-      resetParamsToDefaults();
-      updateVisualBounds();
-      gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
-    }
-  });
-
-  const inputs = ['separation','align','cohesion','max_speed','max_force','sep_weight','align_weight','coh_weight','margin','turn_factor'];
-  inputs.forEach(id => {
-    document.getElementById(id).addEventListener('input', updateUniforms);
-  });
-
-  // toggle panel collapse via bootstrap
-  document.getElementById('toggle-panel').addEventListener('click', () => {
-    const body = document.getElementById('settings-body');
-    const bs = bootstrap.Collapse.getOrCreateInstance(body);
-    bs.toggle();
-  });
-
-  // Start/Pause button
-  document.getElementById('start-pause-btn').addEventListener('click', () => {
-    isSimulationRunning = !isSimulationRunning;
-    updateStartPauseButton();
-  });
-  
-  // Restart button
-  document.getElementById('restart-btn').addEventListener('click', () => {
-    initBoidBuffers(boidCount);
-    createInstancedMesh();
-    bindGroup = gpuDevice.createBindGroup( {
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: boidBuffer } },
-        { binding: 1, resource: { buffer: uniformBuffer } }
-      ]
-    } );
-    isSimulationRunning = true;
-    updateStartPauseButton();
-  });
-  
-  // Reset button
-  document.getElementById('reset-btn').addEventListener('click', resetSimulation);
-  
-  updateStartPauseButton();
-}
-
-function frame ()
+function frame()
 {
-  requestAnimationFrame( frame );
+  requestAnimationFrame(frame);
 
-  // update stats
   const now = performance.now();
-  if ( lastFrameTime ) {
-    const fps = 1000 / (now - lastFrameTime);
-    document.getElementById('info-fps').innerText = `FPS: ${fps.toFixed(1)}`;
+
+  // Throttle renders to MAX_FPS (60Hz by default). Still update controls between frames.
+  if (now - lastRenderTime < FRAME_INTERVAL) {
+    if (controls) controls.update();
+    return;
   }
-  lastFrameTime = now;
-  document.getElementById('info-boids').innerText = `Boids: ${boidCount}`;
+
+  const delta = now - lastRenderTime;
+  lastRenderTime = now;
+  const instantFps = 1000 / delta;
+  fps = fps > 0 ? FPS_SMOOTHING * fps + (1 - FPS_SMOOTHING) * instantFps : instantFps;
 
   // Always update controls so the camera movement is fluid
-  if ( controls ) controls.update();
+  if (controls) controls.update();
 
-  if ( useGPU && !isMapping && isSimulationRunning )
-  {
-    const commandEncoder = gpuDevice.createCommandEncoder();
-    const pass = commandEncoder.beginComputePass();
-    pass.setPipeline( computePipeline );
-    pass.setBindGroup( 0, bindGroup );
-    pass.dispatchWorkgroups( Math.ceil( boidCount / WORKGROUP_SIZE ) );
-    pass.end();
+  if (useGPU) {
+    // Double-buffered staging: pick a buffer that isn't being mapped
+    const si = stagingMapped[currentStaging] ? 1 - currentStaging : currentStaging;
+    currentStaging = 1 - si;
 
-    commandEncoder.copyBufferToBuffer( boidBuffer, 0, stagingBuffer, 0, boidBuffer.size );
-    gpuDevice.queue.submit( [ commandEncoder.finish() ] );
+    if (!stagingMapped[si]) {
+      const encoder = gpuDevice.createCommandEncoder();
+      let pass;
 
-    isMapping = true;
-    stagingBuffer.mapAsync( GPUMapMode.READ ).then( () =>
-    {
-      const data = new Float32Array( stagingBuffer.getMappedRange() );
+      // ── Pass 1: Clear cell counts ──
+      pass = encoder.beginComputePass();
+      pass.setPipeline(clearCountsPipeline);
+      pass.setBindGroup(0, clearCountsBG);
+      pass.dispatchWorkgroups(Math.ceil(NUM_CELLS / WORKGROUP_SIZE));
+      pass.end();
 
-      for ( let i = 0; i < boidCount; i++ )
+      // ── Pass 2: Count boids per cell ──
+      pass = encoder.beginComputePass();
+      pass.setPipeline(countBoidsPipeline);
+      pass.setBindGroup(0, countBoidsBG);
+      pass.dispatchWorkgroups(Math.ceil(BOID_COUNT / WORKGROUP_SIZE));
+      pass.end();
+
+      // ── Pass 3: Prefix sum (single workgroup) ──
+      pass = encoder.beginComputePass();
+      pass.setPipeline(prefixSumPipeline);
+      pass.setBindGroup(0, prefixSumBG);
+      pass.dispatchWorkgroups(1);
+      pass.end();
+
+      // ── Pass 4: Scatter into sorted order ──
+      pass = encoder.beginComputePass();
+      pass.setPipeline(scatterPipeline);
+      pass.setBindGroup(0, scatterBG);
+      pass.dispatchWorkgroups(Math.ceil(BOID_COUNT / WORKGROUP_SIZE));
+      pass.end();
+
+      // ── Pass 5: Update boids via spatial-hash neighbour search ──
+      pass = encoder.beginComputePass();
+      pass.setPipeline(updateBoidsPipeline);
+      pass.setBindGroup(0, updateBoidsBG);
+      pass.dispatchWorkgroups(Math.ceil(BOID_COUNT / WORKGROUP_SIZE));
+      pass.end();
+
+      stepCount++;
+
+      // ── Copy results to staging buffer for CPU read-back ──
+      encoder.copyBufferToBuffer(boidBuffer, 0, stagingBuffers[si], 0, boidBuffer.size);
+      gpuDevice.queue.submit([encoder.finish()]);
+
+      stagingMapped[si] = true;
+      stagingBuffers[si].mapAsync(GPUMapMode.READ).then(() =>
       {
-        const stride = i * 8;
-        _pos.set( data[ stride ], data[ stride + 1 ], data[ stride + 2 ] );
-        _vel.set( data[ stride + 4 ], data[ stride + 5 ], data[ stride + 6 ] );
-
-        if ( _vel.lengthSq() > 0.01 )
-        {
-          _orient.setFromUnitVectors( _up, _vel.clone().normalize() );
-        }
-
-        _matrix.compose( _pos, _orient, { x: 1, y: 1, z: 1 } );
-        boidInstancedMesh.setMatrixAt( i, _matrix );
-      }
-
-        boidInstancedMesh.instanceMatrix.needsUpdate = true; // update finished
-
-      stagingBuffer.unmap();
-      isMapping = false;
-    } ).catch( () => { isMapping = false; } );
+        const data = new Float32Array(stagingBuffers[si].getMappedRange());
+        boidInterleavedBuffer.array.set(data);
+        boidInterleavedBuffer.needsUpdate = true;
+        stagingBuffers[si].unmap();
+        stagingMapped[si] = false;
+      }).catch(() => { stagingMapped[si] = false; });
+    }
   }
 
-  renderer.render( scene, camera );
-}
-
-function updateStartPauseButton() {
-  const btn = document.getElementById('start-pause-btn');
-  const icon = document.getElementById('start-icon');
-  if (isSimulationRunning) {
-    icon.className = 'bi bi-pause-fill';
-    btn.classList.add('btn-success');
-    btn.classList.remove('btn-warning');
-  } else {
-    icon.className = 'bi bi-play-fill';
-    btn.classList.add('btn-warning');
-    btn.classList.remove('btn-success');
+  // Update HUD — only refresh the visible FPS every FPS_DISPLAY_INTERVAL_FRAMES
+  framesSinceFpsUpdate++;
+  if (framesSinceFpsUpdate >= FPS_DISPLAY_INTERVAL_FRAMES) {
+    displayedFps = Math.round(fps);
+    framesSinceFpsUpdate = 0;
+    if (infoFpsEl) infoFpsEl.innerText = `FPS: ${displayedFps}`;
   }
+  if (infoStepEl) infoStepEl.innerText = `Step: ${stepCount}`;
+  if (infoGpuEl) infoGpuEl.innerText = useGPU ? 'Yes' : 'No';
+
+  renderer.render(scene, camera);
 }
 
-function resetSimulation() {
-  boidCount = 15000;
-  boidDensity = 0.00005;
-  SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
-  resetParamsToDefaults();
-  recreateBoids(boidCount);
-  
-  // Update UI inputs to reflect defaults
-  document.getElementById('boid-count').value = boidCount;
-  document.getElementById('boid-density').value = boidDensity.toFixed(6);
-  document.getElementById('separation').value = paramsArray[0];
-  document.getElementById('align').value = paramsArray[1];
-  document.getElementById('cohesion').value = paramsArray[2];
-  document.getElementById('max_speed').value = paramsArray[3];
-  document.getElementById('max_force').value = paramsArray[4];
-  document.getElementById('sep_weight').value = paramsArray[5];
-  document.getElementById('align_weight').value = paramsArray[6];
-  document.getElementById('coh_weight').value = paramsArray[7];
-  document.getElementById('margin').value = paramsArray[8];
-  document.getElementById('turn_factor').value = paramsArray[9];
-  
-  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
-}
-
-initWebGPU().then( () =>
+initWebGPU().then(() =>
 {
   initThree();
   frame();
-} );
+});
