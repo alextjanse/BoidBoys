@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { SimulationUI } from './ui.js';
 
 let boidCount = 15000;
 const WORKGROUP_SIZE = 256;
@@ -69,8 +70,11 @@ let scene, camera, renderer, boidInstancedMesh, controls;
 let gpuDevice, computePipeline, boidBuffer, stagingBuffer, bindGroup;
 let useGPU = false;
 let isMapping = false;
+let simUI = null; // Will be initialized after DOM is ready
+let lastFrameTime = Date.now();
+let frameCount = 0;
+let stepCount = 0;
 let isSimulationRunning = true;
-let lastFrameTime = 0;
 
 // Pre-allocate math objects to save memory and CPU cycles
 const _matrix = new THREE.Matrix4();
@@ -112,7 +116,7 @@ async function initWebGPU ()
   const adapter = await navigator.gpu?.requestAdapter();
   if ( !adapter )
   {
-    document.getElementById( 'info-app' ).innerText = "WebGPU not supported";
+    if ( simUI ) simUI.setInfo( 'info-app', "WebGPU not supported" );
     return false;
   }
   gpuDevice = await adapter.requestDevice();
@@ -152,11 +156,7 @@ async function initWebGPU ()
     compute: { module: shaderModule, entryPoint: 'main' }
   } );
 
-  // after pipeline ready we can initialize UI handlers
-  initUI();
-
   useGPU = true;
-  document.getElementById( 'info-app' ).innerText = "WebGPU Running";
   return true;
 }
 
@@ -202,6 +202,164 @@ function initThree ()
   } );
 }
 
+function initSimulationUI() {
+  const buttonConfig = {
+    'play-pause': {
+      // alternate icons depending on state will be managed by setButtonState
+      iconStates: { playing: '⏸', paused: '▶' },
+      onClick: () => {
+        isSimulationRunning = !isSimulationRunning;
+        simUI.setButtonState('play-pause', isSimulationRunning ? 'playing' : 'paused');
+      }
+    },
+    'restart': {
+      icon: '↻',
+      onClick: () => {
+        initBoidBuffers(boidCount);
+        createInstancedMesh();
+        bindGroup = gpuDevice.createBindGroup( {
+          layout: bindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: boidBuffer } },
+            { binding: 1, resource: { buffer: uniformBuffer } }
+          ]
+        } );
+        isSimulationRunning = true;
+        simUI.setButtonState('play-pause', 'playing');
+      }
+    },
+    'reset': {
+      icon: '↺',
+      onClick: () => {
+        boidCount = 15000;
+        boidDensity = 0.00005;
+        SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
+        resetParamsToDefaults();
+        recreateBoids(boidCount);
+        isSimulationRunning = true;
+        simUI.setButtonState('play-pause', 'playing');
+      }
+    }
+  };
+
+  const paramConfig = {
+    'boid-count': {
+      value: boidCount,
+      min: 100,
+      max: 50000,
+      step: 100,
+      decimals: 0,
+      onChange: (val) => {
+        const n = parseInt(val);
+        if (!isNaN(n) && n > 0) {
+          recreateBoids(n);
+        }
+      }
+    },
+    'boid-density': {
+      value: boidDensity,
+      min: 0.00001,
+      max: 0.0001,
+      step: 0.000001,
+      decimals: 6,
+      onChange: (val) => {
+        const d = parseFloat(val);
+        if (!isNaN(d) && d > 0) {
+          boidDensity = d;
+          SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
+          resetParamsToDefaults();
+          updateVisualBounds();
+          gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
+        }
+      }
+    },
+    'separation': {
+      value: paramsArray[0],
+      min: 5,
+      max: 100,
+      step: 1,
+      decimals: 0,
+      onChange: (val) => { paramsArray[0] = parseFloat(val); updateUniforms(); }
+    },
+    'align': {
+      value: paramsArray[1],
+      min: 5,
+      max: 150,
+      step: 1,
+      decimals: 0,
+      onChange: (val) => { paramsArray[1] = parseFloat(val); updateUniforms(); }
+    },
+    'cohesion': {
+      value: paramsArray[2],
+      min: 5,
+      max: 150,
+      step: 1,
+      decimals: 0,
+      onChange: (val) => { paramsArray[2] = parseFloat(val); updateUniforms(); }
+    },
+    'max-speed': {
+      value: paramsArray[3],
+      min: 1,
+      max: 20,
+      step: 0.1,
+      decimals: 1,
+      onChange: (val) => { paramsArray[3] = parseFloat(val); updateUniforms(); }
+    },
+    'max-force': {
+      value: paramsArray[4],
+      min: 0.01,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      onChange: (val) => { paramsArray[4] = parseFloat(val); updateUniforms(); }
+    },
+    'sep-weight': {
+      value: paramsArray[5],
+      min: 0.1,
+      max: 5,
+      step: 0.1,
+      decimals: 1,
+      onChange: (val) => { paramsArray[5] = parseFloat(val); updateUniforms(); }
+    },
+    'align-weight': {
+      value: paramsArray[6],
+      min: 0.1,
+      max: 5,
+      step: 0.1,
+      decimals: 1,
+      onChange: (val) => { paramsArray[6] = parseFloat(val); updateUniforms(); }
+    },
+    'coh-weight': {
+      value: paramsArray[7],
+      min: 0.1,
+      max: 5,
+      step: 0.1,
+      decimals: 1,
+      onChange: (val) => { paramsArray[7] = parseFloat(val); updateUniforms(); }
+    },
+    'margin': {
+      value: paramsArray[8],
+      min: 10,
+      max: 500,
+      step: 10,
+      decimals: 0,
+      onChange: (val) => { paramsArray[8] = parseFloat(val); updateUniforms(); }
+    },
+    'turn-factor': {
+      value: paramsArray[9],
+      min: 0.01,
+      max: 1,
+      step: 0.01,
+      decimals: 2,
+      onChange: (val) => { paramsArray[9] = parseFloat(val); updateUniforms(); }
+    }
+  };
+
+  simUI = new SimulationUI(paramConfig, buttonConfig);
+  simUI.setInfo('info-app', 'WebGPU Running');
+  simUI.setInfo('info-gpu', 'Press P to toggle params');
+}
+
 function createInstancedMesh() {
   if (boidInstancedMesh) {
     scene.remove(boidInstancedMesh);
@@ -234,98 +392,14 @@ function recreateBoids(newCount) {
   } );
   
   isSimulationRunning = true;
-  updateStartPauseButton();
 }
 
 function updateUniforms() {
-  // read each field from UI inputs (IDs match below)
-  paramsArray[0] = parseFloat(document.getElementById('separation').value);
-  paramsArray[1] = parseFloat(document.getElementById('align').value);
-  paramsArray[2] = parseFloat(document.getElementById('cohesion').value);
-  paramsArray[3] = parseFloat(document.getElementById('max_speed').value);
-  paramsArray[4] = parseFloat(document.getElementById('max_force').value);
-  paramsArray[5] = parseFloat(document.getElementById('sep_weight').value);
-  paramsArray[6] = parseFloat(document.getElementById('align_weight').value);
-  paramsArray[7] = parseFloat(document.getElementById('coh_weight').value);
-  paramsArray[8] = parseFloat(document.getElementById('margin').value);
-  paramsArray[9] = parseFloat(document.getElementById('turn_factor').value);
-  // world_max remains static from SIMULATION_SIZE
+  // Update uniforms from the simUI sliders
   paramsArray[12] = SIMULATION_SIZE.x;
   paramsArray[13] = SIMULATION_SIZE.y;
   paramsArray[14] = SIMULATION_SIZE.z;
   gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
-}
-
-function initUI() {
-  // populate inputs with current defaults
-  document.getElementById('boid-count').value = boidCount;
-  document.getElementById('boid-density').value = boidDensity.toFixed(6);
-  document.getElementById('separation').value = paramsArray[0];
-  document.getElementById('align').value = paramsArray[1];
-  document.getElementById('cohesion').value = paramsArray[2];
-  document.getElementById('max_speed').value = paramsArray[3];
-  document.getElementById('max_force').value = paramsArray[4];
-  document.getElementById('sep_weight').value = paramsArray[5];
-  document.getElementById('align_weight').value = paramsArray[6];
-  document.getElementById('coh_weight').value = paramsArray[7];
-  document.getElementById('margin').value = paramsArray[8];
-  document.getElementById('turn_factor').value = paramsArray[9];
-
-  document.getElementById('boid-count').addEventListener('change', e => {
-    const n = parseInt(e.target.value);
-    if (!isNaN(n) && n > 0) {
-      recreateBoids(n);
-    }
-  });
-
-  document.getElementById('boid-density').addEventListener('input', e => {
-    const d = parseFloat(e.target.value);
-    if (!isNaN(d) && d > 0) {
-      boidDensity = d;
-      SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
-      resetParamsToDefaults();
-      updateVisualBounds();
-      gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
-    }
-  });
-
-  const inputs = ['separation','align','cohesion','max_speed','max_force','sep_weight','align_weight','coh_weight','margin','turn_factor'];
-  inputs.forEach(id => {
-    document.getElementById(id).addEventListener('input', updateUniforms);
-  });
-
-  // toggle panel collapse via bootstrap
-  document.getElementById('toggle-panel').addEventListener('click', () => {
-    const body = document.getElementById('settings-body');
-    const bs = bootstrap.Collapse.getOrCreateInstance(body);
-    bs.toggle();
-  });
-
-  // Start/Pause button
-  document.getElementById('start-pause-btn').addEventListener('click', () => {
-    isSimulationRunning = !isSimulationRunning;
-    updateStartPauseButton();
-  });
-  
-  // Restart button
-  document.getElementById('restart-btn').addEventListener('click', () => {
-    initBoidBuffers(boidCount);
-    createInstancedMesh();
-    bindGroup = gpuDevice.createBindGroup( {
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: boidBuffer } },
-        { binding: 1, resource: { buffer: uniformBuffer } }
-      ]
-    } );
-    isSimulationRunning = true;
-    updateStartPauseButton();
-  });
-  
-  // Reset button
-  document.getElementById('reset-btn').addEventListener('click', resetSimulation);
-  
-  updateStartPauseButton();
 }
 
 function frame ()
@@ -336,10 +410,10 @@ function frame ()
   const now = performance.now();
   if ( lastFrameTime ) {
     const fps = 1000 / (now - lastFrameTime);
-    document.getElementById('info-fps').innerText = `FPS: ${fps.toFixed(1)}`;
+    simUI.setInfo('info-fps', `FPS: ${fps.toFixed(1)}`);
   }
   lastFrameTime = now;
-  document.getElementById('info-boids').innerText = `Boids: ${boidCount}`;
+  simUI.setInfo('info-boids', `Boids: ${boidCount}`);
 
   // Always update controls so the camera movement is fluid
   if ( controls ) controls.update();
@@ -386,20 +460,6 @@ function frame ()
   renderer.render( scene, camera );
 }
 
-function updateStartPauseButton() {
-  const btn = document.getElementById('start-pause-btn');
-  const icon = document.getElementById('start-icon');
-  if (isSimulationRunning) {
-    icon.className = 'bi bi-pause-fill';
-    btn.classList.add('btn-success');
-    btn.classList.remove('btn-warning');
-  } else {
-    icon.className = 'bi bi-play-fill';
-    btn.classList.add('btn-warning');
-    btn.classList.remove('btn-success');
-  }
-}
-
 function resetSimulation() {
   boidCount = 15000;
   boidDensity = 0.00005;
@@ -407,25 +467,14 @@ function resetSimulation() {
   resetParamsToDefaults();
   recreateBoids(boidCount);
   
-  // Update UI inputs to reflect defaults
-  document.getElementById('boid-count').value = boidCount;
-  document.getElementById('boid-density').value = boidDensity.toFixed(6);
-  document.getElementById('separation').value = paramsArray[0];
-  document.getElementById('align').value = paramsArray[1];
-  document.getElementById('cohesion').value = paramsArray[2];
-  document.getElementById('max_speed').value = paramsArray[3];
-  document.getElementById('max_force').value = paramsArray[4];
-  document.getElementById('sep_weight').value = paramsArray[5];
-  document.getElementById('align_weight').value = paramsArray[6];
-  document.getElementById('coh_weight').value = paramsArray[7];
-  document.getElementById('margin').value = paramsArray[8];
-  document.getElementById('turn_factor').value = paramsArray[9];
-  
   gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
 }
 
 initWebGPU().then( () =>
 {
   initThree();
+  initSimulationUI();
+  // initialize button visuals (especially play/pause icon)
+  simUI.setButtonState('play-pause', isSimulationRunning ? 'playing' : 'paused');
   frame();
 } );
