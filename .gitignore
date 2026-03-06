@@ -1,3 +1,7 @@
+.vite/
+.vscode/
+.github/
+
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,node,rider,visualstudio
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,node,rider,visualstudio
 
