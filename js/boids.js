@@ -9,6 +9,14 @@ let boidDensity = 0.000025; // boids per cubic unit
 // Base aspect ratio for simulation size
 const BASE_SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
 
+function getSpawnBounds(worldSize)
+{
+  return {
+    min: { x: 0, y: 0, z: 0 },
+    max: { x: worldSize.x, y: worldSize.y, z: worldSize.z }
+  };
+}
+
 // buffers & pipeline globals so we can rebind when settings change
 let bindGroupLayout, uniformBuffer;
 
@@ -18,11 +26,12 @@ const paramsArray = new Float32Array(16); // 16 floats = 64 bytes
 //         max_force, sep_w, align_w, coh_w,
 //         margin, turn_factor, padding0, padding1,
 //         world_max.x, world_max.y, world_max.z, world_max.w
-function calculateSimulationSize(count, density) {
+function calculateSimulationSize(count, density)
+{
   const baseVolume = BASE_SIMULATION_SIZE.x * BASE_SIMULATION_SIZE.y * BASE_SIMULATION_SIZE.z;
   const requiredVolume = count / density;
   const scaleFactor = Math.cbrt(requiredVolume / baseVolume);
-  
+
   return {
     x: BASE_SIMULATION_SIZE.x * scaleFactor,
     y: BASE_SIMULATION_SIZE.y * scaleFactor,
@@ -30,21 +39,27 @@ function calculateSimulationSize(count, density) {
   };
 }
 
-function updateVisualBounds() {
+function updateVisualBounds()
+{
   // Remove old visual bounds
   const oldBox = scene.getObjectByName('boid-bounds');
   if (oldBox) scene.remove(oldBox);
-  
+
   // Create new visual bounds with updated size
-  const boxGeom = new THREE.BoxGeometry( SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z );
-  const edges = new THREE.EdgesGeometry( boxGeom );
-  const line = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x444444 } ) );
+  const boxGeom = new THREE.BoxGeometry(SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z);
+  const edges = new THREE.EdgesGeometry(boxGeom);
+  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
   line.name = 'boid-bounds';
-  line.position.set( SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2 );
-  scene.add( line );
+  line.position.set(SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2);
+  scene.add(line);
+
+  if (controls) {
+    controls.target.set(SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2);
+  }
 }
 
-function resetParamsToDefaults() {
+function resetParamsToDefaults()
+{
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
   paramsArray[0] = 25.0; // separation_dist
   paramsArray[1] = 50.0; // align_dist
@@ -63,6 +78,12 @@ function resetParamsToDefaults() {
   paramsArray[14] = SIMULATION_SIZE.z;
   paramsArray[15] = 0.0;
 }
+
+function syncParamsToGPU()
+{
+  if (!gpuDevice || !uniformBuffer) return;
+  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
+}
 resetParamsToDefaults();
 
 let scene, camera, renderer, boidInstancedMesh, controls;
@@ -71,54 +92,58 @@ let useGPU = false;
 let isMapping = false;
 let isSimulationRunning = true;
 let lastFrameTime = 0;
+let frameTimes = [];
+let lastFPSUpdate = 0;
+const FPS_SAMPLE_SIZE = 60;
+const FPS_UPDATE_INTERVAL = 500; // Update display every 500ms
 
 // Pre-allocate math objects to save memory and CPU cycles
 const _matrix = new THREE.Matrix4();
 const _pos = new THREE.Vector3();
 const _orient = new THREE.Quaternion();
 const _vel = new THREE.Vector3();
-const _up = new THREE.Vector3( 0, 0, 1 );
+const _up = new THREE.Vector3(0, 0, 1);
 
-function initBoidBuffers(count) {
-  const boidData = new Float32Array( count * 8 );
-  for ( let i = 0; i < count; i++ )
-  {
-    boidData[ i * 8 ] = Math.random() * SIMULATION_SIZE.x;
-    boidData[ i * 8 + 1 ] = Math.random() * SIMULATION_SIZE.y;
-    boidData[ i * 8 + 2 ] = Math.random() * SIMULATION_SIZE.z;
-    boidData[ i * 8 + 3 ] = 1.0;
-    boidData[ i * 8 + 4 ] = ( Math.random() - 0.5 ) * 4;
-    boidData[ i * 8 + 5 ] = ( Math.random() - 0.5 ) * 4;
-    boidData[ i * 8 + 6 ] = ( Math.random() - 0.5 ) * 4;
-    boidData[ i * 8 + 7 ] = 0.0;
+function initBoidBuffers(count)
+{
+  const boidData = new Float32Array(count * 8);
+  const spawnBounds = getSpawnBounds(SIMULATION_SIZE);
+  for (let i = 0; i < count; i++) {
+    boidData[i * 8] = spawnBounds.min.x + Math.random() * (spawnBounds.max.x - spawnBounds.min.x);
+    boidData[i * 8 + 1] = spawnBounds.min.y + Math.random() * (spawnBounds.max.y - spawnBounds.min.y);
+    boidData[i * 8 + 2] = spawnBounds.min.z + Math.random() * (spawnBounds.max.z - spawnBounds.min.z);
+    boidData[i * 8 + 3] = 1.0;
+    boidData[i * 8 + 4] = (Math.random() - 0.5) * 4;
+    boidData[i * 8 + 5] = (Math.random() - 0.5) * 4;
+    boidData[i * 8 + 6] = (Math.random() - 0.5) * 4;
+    boidData[i * 8 + 7] = 0.0;
   }
 
-  boidBuffer = gpuDevice.createBuffer( {
+  boidBuffer = gpuDevice.createBuffer({
     size: boidData.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
-  } );
-  new Float32Array( boidBuffer.getMappedRange() ).set( boidData );
+  });
+  new Float32Array(boidBuffer.getMappedRange()).set(boidData);
   boidBuffer.unmap();
 
-  stagingBuffer = gpuDevice.createBuffer( {
+  stagingBuffer = gpuDevice.createBuffer({
     size: boidData.byteLength,
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  } );
+  });
 }
 
-async function initWebGPU ()
+async function initWebGPU()
 {
   const adapter = await navigator.gpu?.requestAdapter();
-  if ( !adapter )
-  {
-    document.getElementById( 'info-app' ).innerText = "WebGPU not supported";
+  if (!adapter) {
+    document.getElementById('info-app').innerText = "WebGPU not supported";
     return false;
   }
   gpuDevice = await adapter.requestDevice();
 
-  const shaderCode = await fetch( 'compute-shader.wgsl' ).then( r => r.text() );
-  const shaderModule = gpuDevice.createShaderModule( { code: shaderCode } );
+  const shaderCode = await fetch('compute-shader.wgsl').then(r => r.text());
+  const shaderModule = gpuDevice.createShaderModule({ code: shaderCode });
 
 
   initBoidBuffers(boidCount);
@@ -130,114 +155,118 @@ async function initWebGPU ()
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
-  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
+  syncParamsToGPU();
 
-  bindGroupLayout = gpuDevice.createBindGroupLayout( {
+  bindGroupLayout = gpuDevice.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }
     ]
-  } );
+  });
 
-  bindGroup = gpuDevice.createBindGroup( {
+  bindGroup = gpuDevice.createBindGroup({
     layout: bindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: boidBuffer } },
       { binding: 1, resource: { buffer: uniformBuffer } }
     ]
-  } );
+  });
 
-  computePipeline = gpuDevice.createComputePipeline( {
-    layout: gpuDevice.createPipelineLayout( { bindGroupLayouts: [ bindGroupLayout ] } ),
+  computePipeline = gpuDevice.createComputePipeline({
+    layout: gpuDevice.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
     compute: { module: shaderModule, entryPoint: 'main' }
-  } );
+  });
 
   // after pipeline ready we can initialize UI handlers
   initUI();
 
   useGPU = true;
-  document.getElementById( 'info-app' ).innerText = "WebGPU Running";
+  document.getElementById('info-app').innerText = "WebGPU Running";
   return true;
 }
 
-function initThree ()
+function initThree()
 {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color( 0x000005 );
+  scene.background = new THREE.Color(0x000005);
 
-  camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 10000 );
-  camera.position.set( -500, 600, 1000 );
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 10000);
+  camera.position.set(-500, 600, 1000);
 
-  renderer = new THREE.WebGLRenderer( { antialias: true } );
-  renderer.setSize( window.innerWidth, window.innerHeight );
-  renderer.setPixelRatio( window.devicePixelRatio );
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
 
   // FIX: Append to the specific container, not the body!
-  const container = document.getElementById( 'canvas-container' );
-  container.appendChild( renderer.domElement );
+  const container = document.getElementById('canvas-container');
+  container.appendChild(renderer.domElement);
 
-  controls = new OrbitControls( camera, renderer.domElement );
-  controls.target.set( 500, 300, 300 );
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
 
   // Visual Bounds
-  const boxGeom = new THREE.BoxGeometry( SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z );
-  const edges = new THREE.EdgesGeometry( boxGeom );
-  const line = new THREE.LineSegments( edges, new THREE.LineBasicMaterial( { color: 0x444444 } ) );
+  const boxGeom = new THREE.BoxGeometry(SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z);
+  const edges = new THREE.EdgesGeometry(boxGeom);
+  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
   line.name = 'boid-bounds';
-  line.position.set( SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2 );
-  scene.add( line );
+  line.position.set(SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2);
+  scene.add(line);
 
   // Boids mesh
   createInstancedMesh();
 
-  scene.add( new THREE.DirectionalLight( 0xffffff, 1 ), new THREE.AmbientLight( 0xffffff, 0.3 ) );
+  scene.add(new THREE.DirectionalLight(0xffffff, 1), new THREE.AmbientLight(0xffffff, 0.3));
 
-  window.addEventListener( 'resize', () =>
+  window.addEventListener('resize', () =>
   {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize( window.innerWidth, window.innerHeight );
-  } );
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
 }
 
-function createInstancedMesh() {
+function createInstancedMesh()
+{
   if (boidInstancedMesh) {
     scene.remove(boidInstancedMesh);
     boidInstancedMesh.geometry.dispose();
     boidInstancedMesh.material.dispose();
   }
-  const geometry = new THREE.ConeGeometry( 2, 6, 5 ).rotateX( Math.PI / 2 );
-  const material = new THREE.MeshPhongMaterial( { color: 0x00ff88 } );
-  boidInstancedMesh = new THREE.InstancedMesh( geometry, material, boidCount );
-  boidInstancedMesh.instanceMatrix.setUsage( THREE.DynamicDrawUsage );
-  scene.add( boidInstancedMesh );
+  const geometry = new THREE.ConeGeometry(2, 6, 5).rotateX(Math.PI / 2);
+  const material = new THREE.MeshPhongMaterial({ color: 0x00ff88 });
+  boidInstancedMesh = new THREE.InstancedMesh(geometry, material, boidCount);
+  boidInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(boidInstancedMesh);
 }
 
-function recreateBoids(newCount) {
+function recreateBoids(newCount)
+{
   boidCount = newCount;
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
   resetParamsToDefaults();
-  
+  syncParamsToGPU();
+
   initBoidBuffers(boidCount);
   createInstancedMesh();
   updateVisualBounds();
-  
+
   // Rebind the new buffer to the compute pipeline
-  bindGroup = gpuDevice.createBindGroup( {
+  bindGroup = gpuDevice.createBindGroup({
     layout: bindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: boidBuffer } },
       { binding: 1, resource: { buffer: uniformBuffer } }
     ]
-  } );
-  
+  });
+
   isSimulationRunning = true;
   updateStartPauseButton();
 }
 
-function updateUniforms() {
+function updateUniforms()
+{
   // read each field from UI inputs (IDs match below)
   paramsArray[0] = parseFloat(document.getElementById('separation').value);
   paramsArray[1] = parseFloat(document.getElementById('align').value);
@@ -253,10 +282,11 @@ function updateUniforms() {
   paramsArray[12] = SIMULATION_SIZE.x;
   paramsArray[13] = SIMULATION_SIZE.y;
   paramsArray[14] = SIMULATION_SIZE.z;
-  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
+  syncParamsToGPU();
 }
 
-function initUI() {
+function initUI()
+{
   // populate inputs with current defaults
   document.getElementById('boid-count').value = boidCount;
   document.getElementById('boid-density').value = boidDensity.toFixed(6);
@@ -271,122 +301,154 @@ function initUI() {
   document.getElementById('margin').value = paramsArray[8];
   document.getElementById('turn_factor').value = paramsArray[9];
 
-  document.getElementById('boid-count').addEventListener('change', e => {
-    const n = parseInt(e.target.value);
-    if (!isNaN(n) && n > 0) {
+  const boidCountInput = document.getElementById('boid-count');
+  const boidDensityInput = document.getElementById('boid-density');
+  let boidCountUpdateTimer = null;
+
+  const applyBoidCountFromInput = () =>
+  {
+    const n = parseInt(boidCountInput.value, 10);
+    if (!isNaN(n) && n > 0 && n !== boidCount) {
       recreateBoids(n);
     }
+  };
+
+  boidCountInput.addEventListener('change', applyBoidCountFromInput);
+  boidCountInput.addEventListener('input', () =>
+  {
+    if (boidCountUpdateTimer) {
+      clearTimeout(boidCountUpdateTimer);
+    }
+    boidCountUpdateTimer = setTimeout(applyBoidCountFromInput, 250);
   });
 
-  document.getElementById('boid-density').addEventListener('input', e => {
+  boidDensityInput.addEventListener('input', e =>
+  {
     const d = parseFloat(e.target.value);
     if (!isNaN(d) && d > 0) {
       boidDensity = d;
       SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
       resetParamsToDefaults();
       updateVisualBounds();
-      gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
+      syncParamsToGPU();
     }
   });
 
-  const inputs = ['separation','align','cohesion','max_speed','max_force','sep_weight','align_weight','coh_weight','margin','turn_factor'];
-  inputs.forEach(id => {
+  const inputs = ['separation', 'align', 'cohesion', 'max_speed', 'max_force', 'sep_weight', 'align_weight', 'coh_weight', 'margin', 'turn_factor'];
+  inputs.forEach(id =>
+  {
     document.getElementById(id).addEventListener('input', updateUniforms);
   });
 
   // toggle panel collapse via bootstrap
-  document.getElementById('toggle-panel').addEventListener('click', () => {
+  document.getElementById('toggle-panel').addEventListener('click', () =>
+  {
     const body = document.getElementById('settings-body');
     const bs = bootstrap.Collapse.getOrCreateInstance(body);
     bs.toggle();
   });
 
   // Start/Pause button
-  document.getElementById('start-pause-btn').addEventListener('click', () => {
+  document.getElementById('start-pause-btn').addEventListener('click', () =>
+  {
     isSimulationRunning = !isSimulationRunning;
     updateStartPauseButton();
   });
-  
+
   // Restart button
-  document.getElementById('restart-btn').addEventListener('click', () => {
-    initBoidBuffers(boidCount);
-    createInstancedMesh();
-    bindGroup = gpuDevice.createBindGroup( {
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: boidBuffer } },
-        { binding: 1, resource: { buffer: uniformBuffer } }
-      ]
-    } );
+  document.getElementById('restart-btn').addEventListener('click', () =>
+  {
+    const inputCount = parseInt(boidCountInput.value, 10);
+    const inputDensity = parseFloat(boidDensityInput.value);
+
+    if (!isNaN(inputDensity) && inputDensity > 0) {
+      boidDensity = inputDensity;
+    }
+
+    if (!isNaN(inputCount) && inputCount > 0) {
+      recreateBoids(inputCount);
+    } else {
+      recreateBoids(boidCount);
+    }
+
     isSimulationRunning = true;
     updateStartPauseButton();
   });
-  
+
   // Reset button
   document.getElementById('reset-btn').addEventListener('click', resetSimulation);
-  
+
   updateStartPauseButton();
 }
 
-function frame ()
+function frame()
 {
-  requestAnimationFrame( frame );
+  requestAnimationFrame(frame);
 
   // update stats
   const now = performance.now();
-  if ( lastFrameTime ) {
-    const fps = 1000 / (now - lastFrameTime);
-    document.getElementById('info-fps').innerText = `FPS: ${fps.toFixed(1)}`;
+  if (lastFrameTime) {
+    const deltaTime = now - lastFrameTime;
+    frameTimes.push(deltaTime);
+    if (frameTimes.length > FPS_SAMPLE_SIZE) {
+      frameTimes.shift();
+    }
+
+    // Update FPS display less frequently for readability
+    if (now - lastFPSUpdate >= FPS_UPDATE_INTERVAL) {
+      const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+      const fps = 1000 / avgFrameTime;
+      document.getElementById('info-fps').innerText = `FPS: ${fps.toFixed(1)}`;
+      lastFPSUpdate = now;
+    }
   }
   lastFrameTime = now;
   document.getElementById('info-boids').innerText = `Boids: ${boidCount}`;
 
   // Always update controls so the camera movement is fluid
-  if ( controls ) controls.update();
+  if (controls) controls.update();
 
-  if ( useGPU && !isMapping && isSimulationRunning )
-  {
+  if (useGPU && !isMapping && isSimulationRunning) {
     const commandEncoder = gpuDevice.createCommandEncoder();
     const pass = commandEncoder.beginComputePass();
-    pass.setPipeline( computePipeline );
-    pass.setBindGroup( 0, bindGroup );
-    pass.dispatchWorkgroups( Math.ceil( boidCount / WORKGROUP_SIZE ) );
+    pass.setPipeline(computePipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(Math.ceil(boidCount / WORKGROUP_SIZE));
     pass.end();
 
-    commandEncoder.copyBufferToBuffer( boidBuffer, 0, stagingBuffer, 0, boidBuffer.size );
-    gpuDevice.queue.submit( [ commandEncoder.finish() ] );
+    commandEncoder.copyBufferToBuffer(boidBuffer, 0, stagingBuffer, 0, boidBuffer.size);
+    gpuDevice.queue.submit([commandEncoder.finish()]);
 
     isMapping = true;
-    stagingBuffer.mapAsync( GPUMapMode.READ ).then( () =>
+    stagingBuffer.mapAsync(GPUMapMode.READ).then(() =>
     {
-      const data = new Float32Array( stagingBuffer.getMappedRange() );
+      const data = new Float32Array(stagingBuffer.getMappedRange());
 
-      for ( let i = 0; i < boidCount; i++ )
-      {
+      for (let i = 0; i < boidCount; i++) {
         const stride = i * 8;
-        _pos.set( data[ stride ], data[ stride + 1 ], data[ stride + 2 ] );
-        _vel.set( data[ stride + 4 ], data[ stride + 5 ], data[ stride + 6 ] );
+        _pos.set(data[stride], data[stride + 1], data[stride + 2]);
+        _vel.set(data[stride + 4], data[stride + 5], data[stride + 6]);
 
-        if ( _vel.lengthSq() > 0.01 )
-        {
-          _orient.setFromUnitVectors( _up, _vel.clone().normalize() );
+        if (_vel.lengthSq() > 0.01) {
+          _orient.setFromUnitVectors(_up, _vel.clone().normalize());
         }
 
-        _matrix.compose( _pos, _orient, { x: 1, y: 1, z: 1 } );
-        boidInstancedMesh.setMatrixAt( i, _matrix );
+        _matrix.compose(_pos, _orient, { x: 1, y: 1, z: 1 });
+        boidInstancedMesh.setMatrixAt(i, _matrix);
       }
 
-        boidInstancedMesh.instanceMatrix.needsUpdate = true; // update finished
+      boidInstancedMesh.instanceMatrix.needsUpdate = true; // update finished
 
       stagingBuffer.unmap();
       isMapping = false;
-    } ).catch( () => { isMapping = false; } );
+    }).catch(() => { isMapping = false; });
   }
 
-  renderer.render( scene, camera );
+  renderer.render(scene, camera);
 }
 
-function updateStartPauseButton() {
+function updateStartPauseButton()
+{
   const btn = document.getElementById('start-pause-btn');
   const icon = document.getElementById('start-icon');
   if (isSimulationRunning) {
@@ -400,13 +462,14 @@ function updateStartPauseButton() {
   }
 }
 
-function resetSimulation() {
+function resetSimulation()
+{
   boidCount = 15000;
   boidDensity = 0.00005;
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
   resetParamsToDefaults();
   recreateBoids(boidCount);
-  
+
   // Update UI inputs to reflect defaults
   document.getElementById('boid-count').value = boidCount;
   document.getElementById('boid-density').value = boidDensity.toFixed(6);
@@ -420,12 +483,12 @@ function resetSimulation() {
   document.getElementById('coh_weight').value = paramsArray[7];
   document.getElementById('margin').value = paramsArray[8];
   document.getElementById('turn_factor').value = paramsArray[9];
-  
-  gpuDevice.queue.writeBuffer(uniformBuffer, 0, paramsArray.buffer, paramsArray.byteOffset, paramsArray.byteLength);
+
+  syncParamsToGPU();
 }
 
-initWebGPU().then( () =>
+initWebGPU().then(() =>
 {
   initThree();
   frame();
-} );
+});
