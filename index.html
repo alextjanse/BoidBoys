@@ -20,6 +20,8 @@
       width: 300px;
       z-index: 20;
       transition: transform 0.3s ease, opacity 0.3s ease;
+      max-height: calc(100vh - 20px);
+      overflow-y: auto;
     }
   </style>
 </head>
@@ -39,26 +41,30 @@
       </div>
     </div>
     <div id="settings-body" class="card-body collapse show" style="padding: 0.75rem;">
+      <!-- Simulation -->
       <div class="row g-2 mb-1">
         <label for="boid-count" class="col-6 col-form-label" style="font-size: 0.875rem;">Boid Count</label>
-        <div class="col-6"><input type="number" id="boid-count" class="form-control form-control-sm" min="100" max="50000" step="100" value="15000"></div>
+        <div class="col-6"><input type="number" id="boid-count" class="form-control form-control-sm" min="100" max="500000" step="100" value="15000"></div>
       </div>
       <div class="row g-2 mb-1">
         <label for="boid-density" class="col-6 col-form-label" style="font-size: 0.875rem;">Density</label>
         <div class="col-6"><input type="number" id="boid-density" class="form-control form-control-sm" min="0.00001" max="0.0001" step="0.000001" value="0.000050"></div>
       </div>
-      <div class="row g-2 mb-1">
-        <label for="separation" class="col-6 col-form-label" style="font-size: 0.875rem;">Separation</label>
-        <div class="col-6"><input type="number" id="separation" class="form-control form-control-sm" step="0.1" value="25"></div>
+
+      <!-- Mode selector -->
+      <div class="row g-2 mb-2">
+        <label for="sim-mode" class="col-6 col-form-label" style="font-size: 0.875rem;">Mode</label>
+        <div class="col-6">
+          <select id="sim-mode" class="form-select form-select-sm">
+            <option value="0">Boids</option>
+            <option value="1">Stigmergy</option>
+          </select>
+        </div>
       </div>
-      <div class="row g-2 mb-1">
-        <label for="align" class="col-6 col-form-label" style="font-size: 0.875rem;">Alignment</label>
-        <div class="col-6"><input type="number" id="align" class="form-control form-control-sm" step="0.1" value="50"></div>
-      </div>
-      <div class="row g-2 mb-1">
-        <label for="cohesion" class="col-6 col-form-label" style="font-size: 0.875rem;">Cohesion</label>
-        <div class="col-6"><input type="number" id="cohesion" class="form-control form-control-sm" step="0.1" value="50"></div>
-      </div>
+
+      <hr class="my-1">
+
+      <!-- Shared params -->
       <div class="row g-2 mb-1">
         <label for="max_speed" class="col-6 col-form-label" style="font-size: 0.875rem;">Max Speed</label>
         <div class="col-6"><input type="number" id="max_speed" class="form-control form-control-sm" step="0.1" value="5"></div>
@@ -68,34 +74,86 @@
         <div class="col-6"><input type="number" id="max_force" class="form-control form-control-sm" step="0.01" value="0.1"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="sep_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Sep. Weight</label>
-        <div class="col-6"><input type="number" id="sep_weight" class="form-control form-control-sm" step="0.1" value="1.5"></div>
-      </div>
-      <div class="row g-2 mb-1">
-        <label for="align_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Align. Weight</label>
-        <div class="col-6"><input type="number" id="align_weight" class="form-control form-control-sm" step="0.1" value="1.0"></div>
-      </div>
-      <div class="row g-2 mb-1">
-        <label for="coh_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Coh. Weight</label>
-        <div class="col-6"><input type="number" id="coh_weight" class="form-control form-control-sm" step="0.1" value="0.5"></div>
-      </div>
-      <div class="row g-2 mb-1">
         <label for="margin" class="col-6 col-form-label" style="font-size: 0.875rem;">Wall Margin</label>
         <div class="col-6"><input type="number" id="margin" class="form-control form-control-sm" step="1" value="100"></div>
       </div>
-      <div class="row g-2">
+      <div class="row g-2 mb-1">
         <label for="turn_factor" class="col-6 col-form-label" style="font-size: 0.875rem;">Turn Factor</label>
         <div class="col-6"><input type="number" id="turn_factor" class="form-control form-control-sm" step="0.01" value="0.2"></div>
       </div>
+      <div class="row g-2 mb-1">
+        <label for="separation" class="col-6 col-form-label" style="font-size: 0.875rem;">Sep. Distance</label>
+        <div class="col-6"><input type="number" id="separation" class="form-control form-control-sm" step="0.1" value="25"></div>
+      </div>
+      <div class="row g-2 mb-1">
+        <label for="sep_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Sep. Weight</label>
+        <div class="col-6"><input type="number" id="sep_weight" class="form-control form-control-sm" step="0.1" value="1.5"></div>
+      </div>
+
+      <!-- Boids-only params -->
+      <div id="boids-params">
+        <hr class="my-1">
+        <div class="row g-2 mb-1">
+          <label for="align" class="col-6 col-form-label" style="font-size: 0.875rem;">Align Distance</label>
+          <div class="col-6"><input type="number" id="align" class="form-control form-control-sm" step="0.1" value="50"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="cohesion" class="col-6 col-form-label" style="font-size: 0.875rem;">Cohesion Dist.</label>
+          <div class="col-6"><input type="number" id="cohesion" class="form-control form-control-sm" step="0.1" value="50"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="align_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Align Weight</label>
+          <div class="col-6"><input type="number" id="align_weight" class="form-control form-control-sm" step="0.1" value="1.0"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="coh_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Coh. Weight</label>
+          <div class="col-6"><input type="number" id="coh_weight" class="form-control form-control-sm" step="0.1" value="0.5"></div>
+        </div>
+      </div>
+
+      <!-- Stigmergy-only params -->
+      <div id="stigmergy-params" style="display: none;">
+        <hr class="my-1">
+        <div class="row g-2 mb-1">
+          <label for="sensor_angle" class="col-6 col-form-label" style="font-size: 0.875rem;">Sensor Angle</label>
+          <div class="col-6"><input type="number" id="sensor_angle" class="form-control form-control-sm" step="0.05" value="0.5"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="sensor_dist" class="col-6 col-form-label" style="font-size: 0.875rem;">Sensor Dist.</label>
+          <div class="col-6"><input type="number" id="sensor_dist" class="form-control form-control-sm" step="1" value="30"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="deposit_amount" class="col-6 col-form-label" style="font-size: 0.875rem;">Deposit Amt.</label>
+          <div class="col-6"><input type="number" id="deposit_amount" class="form-control form-control-sm" step="0.5" value="5"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="decay_rate" class="col-6 col-form-label" style="font-size: 0.875rem;">Decay Rate</label>
+          <div class="col-6"><input type="number" id="decay_rate" class="form-control form-control-sm" step="0.01" value="0.98"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="diffusion_rate" class="col-6 col-form-label" style="font-size: 0.875rem;">Diffusion Rate</label>
+          <div class="col-6"><input type="number" id="diffusion_rate" class="form-control form-control-sm" step="0.01" value="0.15"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="steer_strength" class="col-6 col-form-label" style="font-size: 0.875rem;">Steer Strength</label>
+          <div class="col-6"><input type="number" id="steer_strength" class="form-control form-control-sm" step="0.05" value="0.3"></div>
+        </div>
+        <div class="row g-2 mb-1">
+          <label for="random_strength" class="col-6 col-form-label" style="font-size: 0.875rem;">Random Str.</label>
+          <div class="col-6"><input type="number" id="random_strength" class="form-control form-control-sm" step="0.01" value="0.05"></div>
+        </div>
+      </div>
     </div>
   </div>
+
+  <!-- Info display -->
   <div
     style="position:fixed; top:10px; left:10px; z-index:10; color:#0f0; background:rgba(0,0,0,0.7); padding:10px; border-radius:8px; font-family:monospace; font-size:16px;">
     <div id="info-app">Initializing...</div>
     <div id="info-fps">FPS:</div>
     <div id="info-boids">Boids:</div>
-    <div id="info-step">Step:</div>
-    <div id="info-gpu">GPU:</div>
+    <div id="info-step">Sim:</div>
+    <div id="info-gpu">Render:</div>
     <div id="gpu-status">GPU Status</div>
   </div>
   <!-- Bootstrap JS (with Popper) -->
