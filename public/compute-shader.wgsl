@@ -59,6 +59,19 @@ fn compute_wall_accel(pos: vec3<f32>) -> vec3<f32> {
   return wa;
 }
 
+fn compute_wall_accel_sphere(pos: vec3<f32>, r: f32, center: vec3<f32>) -> vec3<f32> {
+  let margin = params.margin;
+  let tf = params.turn_factor;
+  let wm = params.world_max.xyz;
+  var wa = vec3<f32>(0.0);
+  if ((pos.x - center.x) * (pos.x - center.x) + (pos.y - center.y) * (pos.y - center.y) + (pos.z - center.z) * (pos.z - center.z) >= r * r - margin) {
+    wa = vec3<f32>(-pos.x * tf, -pos.y * tf, -pos.z * tf);
+    wa /= length(pos);
+  }
+
+  return wa;
+}
+
 // ============================================================
 // Spatial Hash Boids
 // ============================================================
@@ -165,7 +178,12 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
     accel += clamp(desired - my_vel, vec3<f32>(-max_force), vec3<f32>(max_force)) * coh_w;
   }
 
+  // Box
   let wall_accel = compute_wall_accel(my_pos);
+
+  // Sphere
+  //let wall_sphere_accel = compute_wall_accel_sphere(my_pos, 250.0, vec3<f32>(350.0));
+
   var new_vel = my_vel + accel + wall_accel;
   if (length(new_vel) > max_speed) { new_vel = normalize(new_vel) * max_speed; }
   let new_pos = clamp(my_pos + new_vel, vec3<f32>(0.0), params.world_max.xyz);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
 // ── Configuration ──────────────────────────────────────────
 let boidCount = 15000;
@@ -289,7 +290,27 @@ async function initWebGPU()
 function initThree()
 {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x000005);
+  //scene.background = new THREE.Color(0x000005);
+
+  // const loader = new THREE.CubeTextureLoader();
+  //       const texture = loader.load([
+  //           './resources/Cold_Sunset__Cam_2_Left+X.png',
+  //           './resources/Cold_Sunset__Cam_3_Right-X.png',
+  //           './resources/Cold_Sunset__Cam_4_Up+Y.png',
+  //           './resources/Cold_Sunset__Cam_5_Down-Y.png',
+  //           './resources/Cold_Sunset__Cam_0_Front+Z.png',
+  //           './resources/Cold_Sunset__Cam_1_Back-Z.png',
+  //       ]);
+
+  // scene.background = texture;
+
+  const loader = new EXRLoader();
+  loader.load('./resources/meadow_1k.exr', (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    scene.background = texture;
+  })
+
+  // scene.background = new THREE.Color(0x000005);
 
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 10000);
   camera.position.set(-500, 600, 1000);
@@ -307,12 +328,12 @@ function initThree()
   controls.dampingFactor = 0.05;
 
   // Visual Bounds
-  const boxGeom = new THREE.BoxGeometry(SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z);
-  const edges = new THREE.EdgesGeometry(boxGeom);
-  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
-  line.name = 'boid-bounds';
-  line.position.set(SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2);
-  scene.add(line);
+  // const boxGeom = new THREE.BoxGeometry(SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z);
+  // const edges = new THREE.EdgesGeometry(boxGeom);
+  // const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
+  // line.name = 'boid-bounds';
+  // line.position.set(SIMULATION_SIZE.x / 2, SIMULATION_SIZE.y / 2, SIMULATION_SIZE.z / 2);
+  // scene.add(line);
 
   createInstancedMesh();
   scene.add(new THREE.DirectionalLight(0xffffff, 1), new THREE.AmbientLight(0xffffff, 0.3));
@@ -333,7 +354,7 @@ function createInstancedMesh()
     boidInstancedMesh.material.dispose();
   }
   const geometry = new THREE.ConeGeometry(2, 6, 5).rotateX(Math.PI / 2);
-  const material = new THREE.MeshPhongMaterial({ color: 0x00ff88 });
+  const material = new THREE.MeshPhongMaterial({ color: 0x000000 });
   boidInstancedMesh = new THREE.InstancedMesh(geometry, material, boidCount);
   boidInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   scene.add(boidInstancedMesh);
@@ -353,7 +374,7 @@ function recreateBoids(newCount)
   syncParamsToGPU();
 
   createInstancedMesh();
-  updateVisualBounds();
+  //updateVisualBounds();
   createBindGroups();
 
   isSimulationRunning = true;
