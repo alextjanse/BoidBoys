@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { PerformanceReportExporter } from './performance-report.ts';
 
 // #region Configuration
-let boidCount = 15000;
+let boidCount = 100000;
 const WORKGROUP_SIZE = 256;
-let SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
-let boidDensity = 0.000025;
-const BASE_SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
+let SIMULATION_SIZE = { x: 800, y: 800, z: 800 };
+let boidDensity = 0.000050;
+const BASE_SIMULATION_SIZE = { x: 800, y: 800, z: 800 };
 
 // #endregion
 
@@ -37,6 +38,7 @@ let gpuDevice;
 let useGPU = false;
 let isMapping = false;
 let isSimulationRunning = true;
+let wasSettingsPanelOpenBeforeBenchmark = null;
 
 // Buffers
 let boidBuffer, cellHeadBuffer, boidNextBuffer;
@@ -58,6 +60,12 @@ const FPS_SAMPLE_SIZE = 60;
 const FPS_UPDATE_INTERVAL = 500;
 let simTimes = [];
 let renderTimes = [];
+const reportExporter = new PerformanceReportExporter();
+const hardwareInfo = {
+  cpu: `Logical Cores: ${navigator.hardwareConcurrency || 'Unknown'}`,
+  gpu: 'WebGPU Adapter (Unknown)',
+  os: navigator.userAgent,
+};
 
 // #endregion
 
@@ -260,6 +268,11 @@ async function initWebGPU()
     document.getElementById('info-app').innerText = "WebGPU not supported";
     return false;
   }
+
+  if (adapter?.info?.description) {
+    hardwareInfo.gpu = adapter.info.description;
+  }
+
   gpuDevice = await adapter.requestDevice();
 
   const shaderCode = await fetch('compute-shader.wgsl').then(r => r.text());
@@ -322,8 +335,10 @@ function initThree()
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000005);
 
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 10000);
-  camera.position.set(-500, 600, 1000);
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 20000);
+  const _initHalf = SIMULATION_SIZE.x / 2;
+  const _initD = SIMULATION_SIZE.x;
+  camera.position.set(_initHalf + _initD, _initHalf + _initD, _initHalf + _initD);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -395,6 +410,24 @@ function recreateBoids(newCount)
   updateStartPauseButton();
 }
 
+// Reinitialize boids for benchmark
+function resetBoidsForBenchmark()
+{
+  SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
+
+  initBoidBuffers(boidCount);
+  initSpatialHashBuffers();
+  initMatrixBuffers();
+  syncParamsToGPU();
+
+  createInstancedMesh();
+  updateVisualBounds();
+  createBindGroups();
+
+  isSimulationRunning = true;
+  updateStartPauseButton();
+}
+
 // Uniform updates from the UI
 
 // Read UI inputs and sync them into the params array
@@ -417,6 +450,7 @@ function updateUniforms()
 // #endregion
 
 // #region UI initialization
+const p = (v) => parseFloat(v.toPrecision(6));
 
 // Initialize UI controls and wire up event handlers
 function initUI()
@@ -424,16 +458,16 @@ function initUI()
   // Populate inputs with defaults
   document.getElementById('boid-count').value = boidCount;
   document.getElementById('boid-density').value = boidDensity.toFixed(6);
-  document.getElementById('separation').value = paramsArray[0];
-  document.getElementById('align').value = paramsArray[1];
-  document.getElementById('cohesion').value = paramsArray[2];
-  document.getElementById('max_speed').value = paramsArray[3];
-  document.getElementById('max_force').value = paramsArray[4];
-  document.getElementById('sep_weight').value = paramsArray[5];
-  document.getElementById('align_weight').value = paramsArray[6];
-  document.getElementById('coh_weight').value = paramsArray[7];
-  document.getElementById('margin').value = paramsArray[8];
-  document.getElementById('turn_factor').value = paramsArray[9];
+  document.getElementById('separation').value = p(paramsArray[0]);
+  document.getElementById('align').value = p(paramsArray[1]);
+  document.getElementById('cohesion').value = p(paramsArray[2]);
+  document.getElementById('max_speed').value = p(paramsArray[3]);
+  document.getElementById('max_force').value = p(paramsArray[4]);
+  document.getElementById('sep_weight').value = p(paramsArray[5]);
+  document.getElementById('align_weight').value = p(paramsArray[6]);
+  document.getElementById('coh_weight').value = p(paramsArray[7]);
+  document.getElementById('margin').value = p(paramsArray[8]);
+  document.getElementById('turn_factor').value = p(paramsArray[9]);
 
   // Boid count inputs and handlers
   const boidCountInput = document.getElementById('boid-count');
@@ -526,7 +560,35 @@ function initUI()
     benchmarker.start();
   });
 
+  // Import benchmark JSON and open graph preview (single or comparison)
+  document.getElementById('import-report-btn').addEventListener('click', () =>
+  {
+    const input = document.getElementById('benchmark-json-input');
+    if (input) input.click();
+  });
+
+  document.getElementById('benchmark-json-input').addEventListener('change', async (event) =>
+  {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    if (files.length === 0) return;
+
+    try {
+      await reportExporter.openBenchmarkPreviewFromJsonFiles(files);
+    } catch (error) {
+      console.error('Failed to import benchmark JSON:', error);
+      window.alert('Failed to import benchmark JSON. See console for details.');
+    } finally {
+      event.target.value = '';
+    }
+  });
+
   updateStartPauseButton();
+
+  // Initialize Bootstrap tooltips on all settings inputs
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el =>
+  {
+    bootstrap.Tooltip.getOrCreateInstance(el, { trigger: 'hover' });
+  });
 }
 
 // #endregion
@@ -541,20 +603,77 @@ const BenchmarkState = {
   COMPLETED: 3
 };
 
+// Manages the benchmarking flow, including warm-up, recording, and result export
 class BoidBenchmarker
 {
-  constructor(onResetCallback)
+  constructor(onResetCallback, onCompleteCallback = null)
   {
     this.state = BenchmarkState.IDLE;
     this.frameTimes = [];
     this.lastFrameTime = 0;
     this.onResetCallback = onResetCallback;
+    this.onCompleteCallback = onCompleteCallback;
     this.WARM_UP_MS = 10000;
     this.RECORD_MS = 10000;
     this.warmUpTimeout = null;
     this.recordTimeout = null;
+    this.warmUpEndsAt = 0;
+    this.recordEndsAt = 0;
+    this.simFrameSamples = [];
+    this.renderFrameSamples = [];
+    this.onEscHandler = null;
   }
 
+  // Register a hotkey (Esc) to allow the user to cancel the benchmark early
+  registerCancelHotkey()
+  {
+    if (typeof window === 'undefined' || this.onEscHandler) return;
+    this.onEscHandler = (event) =>
+    {
+      if (event.key !== 'Escape') return;
+      if (this.state !== BenchmarkState.WARMING_UP && this.state !== BenchmarkState.RECORDING) return;
+      event.preventDefault();
+      this.cancelBenchmark('Benchmark canceled by user (Esc).');
+    };
+    window.addEventListener('keydown', this.onEscHandler);
+  }
+
+  // Unregister the hotkey when benchmark is completed or canceled
+  unregisterCancelHotkey()
+  {
+    if (typeof window === 'undefined' || !this.onEscHandler) return;
+    window.removeEventListener('keydown', this.onEscHandler);
+    this.onEscHandler = null;
+  }
+
+  // Clean up timers, reset state, and call completion callback if provided
+  finalizeRun()
+  {
+    if (this.warmUpTimeout) {
+      clearTimeout(this.warmUpTimeout);
+      this.warmUpTimeout = null;
+    }
+    if (this.recordTimeout) {
+      clearTimeout(this.recordTimeout);
+      this.recordTimeout = null;
+    }
+
+    this.unregisterCancelHotkey();
+    this.state = BenchmarkState.IDLE;
+    this.warmUpEndsAt = 0;
+    this.recordEndsAt = 0;
+    if (this.onCompleteCallback) this.onCompleteCallback();
+  }
+
+  // Cancel the benchmark early with an optional reason message
+  cancelBenchmark(reason = 'Benchmark canceled.')
+  {
+    if (this.state !== BenchmarkState.WARMING_UP && this.state !== BenchmarkState.RECORDING) return;
+    this.finalizeRun();
+    console.log(reason);
+  }
+
+  // Start the benchmark flow: warm-up phase followed by recording phase, with appropriate state management and callbacks
   start()
   {
     if (this.state !== BenchmarkState.IDLE && this.state !== BenchmarkState.COMPLETED) {
@@ -563,8 +682,13 @@ class BoidBenchmarker
     }
 
     this.frameTimes = [];
+    this.simFrameSamples = [];
+    this.renderFrameSamples = [];
     this.lastFrameTime = 0;
     this.state = BenchmarkState.WARMING_UP;
+    this.warmUpEndsAt = performance.now() + this.WARM_UP_MS;
+    this.recordEndsAt = 0;
+    this.registerCancelHotkey();
 
     this.onResetCallback();
     console.log("Benchmark: WARMING UP (10s)...");
@@ -573,6 +697,7 @@ class BoidBenchmarker
     {
       this.state = BenchmarkState.RECORDING;
       this.lastFrameTime = performance.now();
+      this.recordEndsAt = performance.now() + this.RECORD_MS;
       console.log("Benchmark: RECORDING (10s)...");
 
       this.recordTimeout = setTimeout(() =>
@@ -583,152 +708,137 @@ class BoidBenchmarker
     }, this.WARM_UP_MS);
   }
 
-  recordFrame(now = performance.now())
+  // Record a frame time sample, using GPU timestamp if provided, and only if currently in the recording phase
+  recordFrame(now = null, gpuTimestampMs = null)
   {
+    const fallbackNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
+    const timestamp = Number.isFinite(gpuTimestampMs)
+      ? gpuTimestampMs
+      : (Number.isFinite(now) ? now : fallbackNow);
+
     if (this.state !== BenchmarkState.RECORDING) {
-      this.lastFrameTime = now;
+      this.lastFrameTime = timestamp;
       return;
     }
 
-    const delta = now - this.lastFrameTime;
+    const delta = timestamp - this.lastFrameTime;
     if (delta > 0) {
       this.frameTimes.push(delta);
     }
-    this.lastFrameTime = now;
+    this.lastFrameTime = timestamp;
   }
 
-  completeBenchmark()
+  // Record a simulation time sample, only if currently in the recording phase
+  recordSimulationSample(simulationMs)
+  {
+    if (this.state === BenchmarkState.RECORDING && Number.isFinite(simulationMs)) {
+      this.simFrameSamples.push(simulationMs);
+    }
+  }
+
+  // Record a render time sample, only if currently in the recording phase
+  recordRenderSample(renderMs)
+  {
+    if (this.state === BenchmarkState.RECORDING && Number.isFinite(renderMs)) {
+      this.renderFrameSamples.push(renderMs);
+    }
+  }
+
+  // Return the current benchmark status, including phase, time remaining, and visibility for the HUD display
+  getStatus(now = performance.now())
+  {
+    if (this.state === BenchmarkState.WARMING_UP) {
+      return {
+        visible: true,
+        phaseClass: 'warming',
+        status: 'Warming Up',
+        detail: `${Math.max(0, (this.warmUpEndsAt - now) / 1000).toFixed(1)}s remaining`,
+      };
+    }
+
+    if (this.state === BenchmarkState.RECORDING) {
+      return {
+        visible: true,
+        phaseClass: 'recording',
+        status: 'Recording',
+        detail: `${Math.max(0, (this.recordEndsAt - now) / 1000).toFixed(1)}s remaining`,
+      };
+    }
+
+    if (this.state === BenchmarkState.COMPLETED) {
+      return {
+        visible: true,
+        phaseClass: 'completed',
+        status: 'Completed',
+        detail: 'Preparing export...',
+      };
+    }
+
+    return {
+      visible: false,
+      phaseClass: '',
+      status: 'Idle',
+      detail: '',
+    };
+  }
+
+  // Complete the benchmark by exporting the results, including frame times, settings, hardware info, and average simulation/render times, then finalize the run and call completion callback
+  async completeBenchmark()
   {
     this.state = BenchmarkState.COMPLETED;
+    this.unregisterCancelHotkey();
     console.log(`Benchmark COMPLETED. Captured ${this.frameTimes.length} frames.`);
 
-    const filename = this.generateFilename();
-    if (!filename) {
-      console.log("Benchmark export cancelled.");
-      this.state = BenchmarkState.IDLE;
+    if (this.frameTimes.length === 0) {
+      console.warn('Benchmark completed without captured frame times.');
+      this.finalizeRun();
       return;
     }
 
-    const countLabel = boidCount >= 1000 ? `${(boidCount / 1000).toFixed(0)}K` : boidCount;
-    const canvas = this.renderBenchmarkGraph(this.frameTimes, `Performance Benchmark: ${countLabel} Boids`);
-    this.exportGraph(canvas, filename);
-  }
+    const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
 
-  generateFilename()
-  {
-    let userInput = window.prompt("Benchmark complete! Enter a name for the export:");
-    if (userInput === null) return null;
-
-    userInput = userInput.replace(/[/\\?%*:|"<>]/g, '').trim();
-    if (!userInput) userInput = "Untitled";
-
-    const date = new Date();
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    const dateString = `${yyyy}${mm}${dd}`;
-
-    const countLabel = boidCount >= 1000 ? `${(boidCount / 1000).toFixed(0)}K` : boidCount;
-    return `${dateString}_${countLabel}_Boids_${userInput.replace(/\s+/g, '_')}.png`;
-  }
-
-  renderBenchmarkGraph(data, title)
-  {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1200;
-    canvas.height = 600;
-    const ctx = canvas.getContext("2d");
-
-    ctx.fillStyle = "#0c0c16";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const validData = data.filter(d => d > 0);
-    const avgDelta = validData.reduce((a, b) => a + b, 0) / validData.length;
-    const avgFps = 1000 / avgDelta;
-
-    const sortedData = [...validData].sort((a, b) => b - a);
-    const onePercentIndex = Math.floor(sortedData.length * 0.01);
-    const onePercentLowFps = 1000 / (sortedData[onePercentIndex] || avgDelta);
-
-    const padding = 60;
-    const chartWidth = canvas.width - padding * 2;
-    const chartHeight = canvas.height - padding * 2;
-    let maxMs = Math.max(...validData, 30);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 24px sans-serif";
-    ctx.fillText(title, padding, padding - 20);
-
-    ctx.font = "18px sans-serif";
-    ctx.fillStyle = "#00ff88";
-    ctx.fillText(`Avg FPS: ${avgFps.toFixed(1)}`, padding + 400, padding - 20);
-    ctx.fillStyle = "#ff5555";
-    ctx.fillText(`1% Low FPS: ${onePercentLowFps.toFixed(1)}`, padding + 600, padding - 20);
-
-    ctx.strokeStyle = "#444";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
-
-    const targetY = padding + chartHeight - (16.67 / maxMs) * chartHeight;
-    ctx.strokeStyle = "rgba(255, 60, 60, 0.8)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(padding, targetY);
-    ctx.lineTo(canvas.width - padding, targetY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    ctx.fillStyle = "#ff3c3c";
-    ctx.font = "14px sans-serif";
-    ctx.fillText("16.67ms (60 FPS)", padding - 5, targetY - 5);
-
-    ctx.strokeStyle = "#00ff88";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let i = 0; i < validData.length; i++) {
-      const x = padding + (i / (validData.length - 1)) * chartWidth;
-      const y = padding + chartHeight - (validData[i] / maxMs) * chartHeight;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    try {
+      await reportExporter.exportPerformanceReport({
+        frameTimes: this.frameTimes,
+        settings: {
+          boidCount,
+          separationWeight: paramsArray[5],
+          alignmentWeight: paramsArray[6],
+          cohesionWeight: paramsArray[7],
+          maxSpeed: paramsArray[3],
+          updateFrequency: WORKGROUP_SIZE,
+          projectName: 'Boid Boys',
+          groupName: 'Boid Boys',
+          version: 'v1.0.0',
+        },
+        hardware: hardwareInfo,
+        metrics: {
+          avgRenderTime: avg(this.renderFrameSamples),
+          avgSimTime: avg(this.simFrameSamples),
+        },
+      });
+    } finally {
+      this.finalizeRun();
+      console.log('Benchmark flow finished. Ready for next run.');
     }
-    ctx.stroke();
-
-    return canvas;
-  }
-
-  exportGraph(canvas, filename)
-  {
-    canvas.toBlob((blob) =>
-    {
-      if (!blob) {
-        console.error("Failed to generate Canvas blob.");
-        this.state = BenchmarkState.IDLE;
-        return;
-      }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      this.state = BenchmarkState.IDLE;
-      console.log("Benchmark export complete. Ready for next run.");
-    }, "image/png");
   }
 }
 
-const benchmarker = new BoidBenchmarker(() =>
-{
-  resetSimulation();
-});
+const benchmarker = new BoidBenchmarker(
+  () =>
+  {
+    collapseSettingsPanelForBenchmark();
+    resetBoidsForBenchmark();
+    lockCameraForBenchmark();
+  },
+  () =>
+  {
+    unlockCameraAfterBenchmark();
+    restoreSettingsPanelAfterBenchmark();
+  }
+);
 // #endregion
 
 // Animation frame: run simulation and render
@@ -739,6 +849,7 @@ function frame()
   const now = performance.now();
 
   benchmarker.recordFrame(now);
+  updateBenchmarkHUD(now);
 
   // FPS tracking
   if (lastFrameTime) {
@@ -813,7 +924,9 @@ function frame()
     gpuDevice.queue.submit([encoder.finish()]);
 
     const simEnd = performance.now();
-    simTimes.push(simEnd - simStart);
+    const simDelta = simEnd - simStart;
+    simTimes.push(simDelta);
+    benchmarker.recordSimulationSample(simDelta);
 
     // Async readback of instance matrices
     isMapping = true;
@@ -828,7 +941,9 @@ function frame()
       matrixStagingBuffer.unmap();
       isMapping = false;
 
-      renderTimes.push(performance.now() - renderStart);
+      const renderDelta = performance.now() - renderStart;
+      renderTimes.push(renderDelta);
+      benchmarker.recordRenderSample(renderDelta);
     }).catch(() => { isMapping = false; });
   }
 
@@ -855,10 +970,86 @@ function updateStartPauseButton()
   }
 }
 
+// Collapse settings panel at benchmark start while remembering previous state
+function collapseSettingsPanelForBenchmark()
+{
+  const body = document.getElementById('settings-body');
+  if (!body) return;
+
+  wasSettingsPanelOpenBeforeBenchmark = body.classList.contains('show');
+  const bs = bootstrap.Collapse.getOrCreateInstance(body, { toggle: false });
+  bs.hide();
+}
+
+// Restore settings panel visibility to its pre-benchmark state
+function restoreSettingsPanelAfterBenchmark()
+{
+  if (wasSettingsPanelOpenBeforeBenchmark === null) return;
+
+  const body = document.getElementById('settings-body');
+  if (!body) {
+    wasSettingsPanelOpenBeforeBenchmark = null;
+    return;
+  }
+
+  const bs = bootstrap.Collapse.getOrCreateInstance(body, { toggle: false });
+  if (wasSettingsPanelOpenBeforeBenchmark) {
+    bs.show();
+  } else {
+    bs.hide();
+  }
+
+  wasSettingsPanelOpenBeforeBenchmark = null;
+}
+
+// Lock camera to a fixed default position for a reproducible benchmark view
+function lockCameraForBenchmark()
+{
+  if (!camera || !controls) return;
+  const cx = SIMULATION_SIZE.x / 2;
+  const cy = SIMULATION_SIZE.y / 2;
+  const cz = SIMULATION_SIZE.z / 2;
+  const d = SIMULATION_SIZE.x * 1.5;
+  camera.position.set(cx + d, cy + d, cz + d);
+  controls.target.set(cx, cy, cz);
+  controls.update();
+  controls.enabled = false;
+}
+
+// Re-enable camera controls after benchmark completes
+function unlockCameraAfterBenchmark()
+{
+  if (!controls) return;
+  controls.enabled = true;
+}
+
+function updateBenchmarkHUD(now)
+{
+  const hud = document.getElementById('benchmark-hud');
+  if (!hud) return;
+
+  const statusEl = hud.querySelector('.status');
+  const countdownEl = hud.querySelector('.countdown');
+  if (!statusEl || !countdownEl) return;
+
+  const state = benchmarker.getStatus(now);
+  hud.classList.remove('warming', 'recording', 'completed');
+
+  if (!state.visible) {
+    hud.classList.remove('show');
+    return;
+  }
+
+  hud.classList.add('show');
+  if (state.phaseClass) hud.classList.add(state.phaseClass);
+  statusEl.textContent = state.status;
+  countdownEl.textContent = state.detail;
+}
+
 // Reset simulation to default parameters and recreate boids
 function resetSimulation()
 {
-  boidCount = 15000;
+  boidCount = 100000;
   boidDensity = 0.00005;
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
   resetParamsToDefaults();
@@ -867,16 +1058,16 @@ function resetSimulation()
   // Update UI inputs
   document.getElementById('boid-count').value = boidCount;
   document.getElementById('boid-density').value = boidDensity.toFixed(6);
-  document.getElementById('separation').value = paramsArray[0];
-  document.getElementById('align').value = paramsArray[1];
-  document.getElementById('cohesion').value = paramsArray[2];
-  document.getElementById('max_speed').value = paramsArray[3];
-  document.getElementById('max_force').value = paramsArray[4];
-  document.getElementById('sep_weight').value = paramsArray[5];
-  document.getElementById('align_weight').value = paramsArray[6];
-  document.getElementById('coh_weight').value = paramsArray[7];
-  document.getElementById('margin').value = paramsArray[8];
-  document.getElementById('turn_factor').value = paramsArray[9];
+  document.getElementById('separation').value = p(paramsArray[0]);
+  document.getElementById('align').value = p(paramsArray[1]);
+  document.getElementById('cohesion').value = p(paramsArray[2]);
+  document.getElementById('max_speed').value = p(paramsArray[3]);
+  document.getElementById('max_force').value = p(paramsArray[4]);
+  document.getElementById('sep_weight').value = p(paramsArray[5]);
+  document.getElementById('align_weight').value = p(paramsArray[6]);
+  document.getElementById('coh_weight').value = p(paramsArray[7]);
+  document.getElementById('margin').value = p(paramsArray[8]);
+  document.getElementById('turn_factor').value = p(paramsArray[9]);
 
   syncParamsToGPU();
 }
