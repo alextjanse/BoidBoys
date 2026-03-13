@@ -520,6 +520,12 @@ function initUI()
   // Reset control
   document.getElementById('reset-btn').addEventListener('click', resetSimulation);
 
+  // Benchmark control
+  document.getElementById('benchmark-btn').addEventListener('click', () =>
+  {
+    benchmarker.start();
+  });
+
   updateStartPauseButton();
 }
 
@@ -527,12 +533,212 @@ function initUI()
 
 // #region Main frame loop
 
+// #region Benchmarker
+const BenchmarkState = {
+  IDLE: 0,
+  WARMING_UP: 1,
+  RECORDING: 2,
+  COMPLETED: 3
+};
+
+class BoidBenchmarker
+{
+  constructor(onResetCallback)
+  {
+    this.state = BenchmarkState.IDLE;
+    this.frameTimes = [];
+    this.lastFrameTime = 0;
+    this.onResetCallback = onResetCallback;
+    this.WARM_UP_MS = 10000;
+    this.RECORD_MS = 10000;
+    this.warmUpTimeout = null;
+    this.recordTimeout = null;
+  }
+
+  start()
+  {
+    if (this.state !== BenchmarkState.IDLE && this.state !== BenchmarkState.COMPLETED) {
+      console.warn("Benchmark already in progress.");
+      return;
+    }
+
+    this.frameTimes = [];
+    this.lastFrameTime = 0;
+    this.state = BenchmarkState.WARMING_UP;
+
+    this.onResetCallback();
+    console.log("Benchmark: WARMING UP (10s)...");
+
+    this.warmUpTimeout = setTimeout(() =>
+    {
+      this.state = BenchmarkState.RECORDING;
+      this.lastFrameTime = performance.now();
+      console.log("Benchmark: RECORDING (10s)...");
+
+      this.recordTimeout = setTimeout(() =>
+      {
+        this.completeBenchmark();
+      }, this.RECORD_MS);
+
+    }, this.WARM_UP_MS);
+  }
+
+  recordFrame(now = performance.now())
+  {
+    if (this.state !== BenchmarkState.RECORDING) {
+      this.lastFrameTime = now;
+      return;
+    }
+
+    const delta = now - this.lastFrameTime;
+    if (delta > 0) {
+      this.frameTimes.push(delta);
+    }
+    this.lastFrameTime = now;
+  }
+
+  completeBenchmark()
+  {
+    this.state = BenchmarkState.COMPLETED;
+    console.log(`Benchmark COMPLETED. Captured ${this.frameTimes.length} frames.`);
+
+    const filename = this.generateFilename();
+    if (!filename) {
+      console.log("Benchmark export cancelled.");
+      this.state = BenchmarkState.IDLE;
+      return;
+    }
+
+    const countLabel = boidCount >= 1000 ? `${(boidCount / 1000).toFixed(0)}K` : boidCount;
+    const canvas = this.renderBenchmarkGraph(this.frameTimes, `Performance Benchmark: ${countLabel} Boids`);
+    this.exportGraph(canvas, filename);
+  }
+
+  generateFilename()
+  {
+    let userInput = window.prompt("Benchmark complete! Enter a name for the export:");
+    if (userInput === null) return null;
+
+    userInput = userInput.replace(/[/\\?%*:|"<>]/g, '').trim();
+    if (!userInput) userInput = "Untitled";
+
+    const date = new Date();
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const dateString = `${yyyy}${mm}${dd}`;
+
+    const countLabel = boidCount >= 1000 ? `${(boidCount / 1000).toFixed(0)}K` : boidCount;
+    return `${dateString}_${countLabel}_Boids_${userInput.replace(/\s+/g, '_')}.png`;
+  }
+
+  renderBenchmarkGraph(data, title)
+  {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200;
+    canvas.height = 600;
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#0c0c16";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const validData = data.filter(d => d > 0);
+    const avgDelta = validData.reduce((a, b) => a + b, 0) / validData.length;
+    const avgFps = 1000 / avgDelta;
+
+    const sortedData = [...validData].sort((a, b) => b - a);
+    const onePercentIndex = Math.floor(sortedData.length * 0.01);
+    const onePercentLowFps = 1000 / (sortedData[onePercentIndex] || avgDelta);
+
+    const padding = 60;
+    const chartWidth = canvas.width - padding * 2;
+    const chartHeight = canvas.height - padding * 2;
+    let maxMs = Math.max(...validData, 30);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 24px sans-serif";
+    ctx.fillText(title, padding, padding - 20);
+
+    ctx.font = "18px sans-serif";
+    ctx.fillStyle = "#00ff88";
+    ctx.fillText(`Avg FPS: ${avgFps.toFixed(1)}`, padding + 400, padding - 20);
+    ctx.fillStyle = "#ff5555";
+    ctx.fillText(`1% Low FPS: ${onePercentLowFps.toFixed(1)}`, padding + 600, padding - 20);
+
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(padding, canvas.height - padding);
+    ctx.lineTo(canvas.width - padding, canvas.height - padding);
+    ctx.stroke();
+
+    const targetY = padding + chartHeight - (16.67 / maxMs) * chartHeight;
+    ctx.strokeStyle = "rgba(255, 60, 60, 0.8)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(padding, targetY);
+    ctx.lineTo(canvas.width - padding, targetY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = "#ff3c3c";
+    ctx.font = "14px sans-serif";
+    ctx.fillText("16.67ms (60 FPS)", padding - 5, targetY - 5);
+
+    ctx.strokeStyle = "#00ff88";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < validData.length; i++) {
+      const x = padding + (i / (validData.length - 1)) * chartWidth;
+      const y = padding + chartHeight - (validData[i] / maxMs) * chartHeight;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    return canvas;
+  }
+
+  exportGraph(canvas, filename)
+  {
+    canvas.toBlob((blob) =>
+    {
+      if (!blob) {
+        console.error("Failed to generate Canvas blob.");
+        this.state = BenchmarkState.IDLE;
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      this.state = BenchmarkState.IDLE;
+      console.log("Benchmark export complete. Ready for next run.");
+    }, "image/png");
+  }
+}
+
+const benchmarker = new BoidBenchmarker(() =>
+{
+  resetSimulation();
+});
+// #endregion
+
 // Animation frame: run simulation and render
 function frame()
 {
   requestAnimationFrame(frame);
 
   const now = performance.now();
+
+  benchmarker.recordFrame(now);
 
   // FPS tracking
   if (lastFrameTime) {
