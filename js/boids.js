@@ -1,30 +1,37 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-// ── Configuration ──────────────────────────────────────────
+// #region Configuration
 let boidCount = 15000;
 const WORKGROUP_SIZE = 256;
 let SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
 let boidDensity = 0.000025;
 const BASE_SIMULATION_SIZE = { x: 1000, y: 600, z: 600 };
 
-// Grid config (derived from behavior distances and world size)
+// #endregion
+
+// #region Grid config (derived from behavior distances and world size)
 let cellSize = 50;
 let gridDim = { x: 1, y: 1, z: 1 };
 let numCells = 1;
 
-// ── Uniform buffer (20 floats = 80 bytes) ──────────────────
+// #endregion
+
+// #region Uniform buffer (20 floats = 80 bytes)
 const paramsArray = new Float32Array(20);
-// [0]  separation_dist    [1]  align_dist
-// [2]  cohesion_dist      [3]  max_speed
-// [4]  max_force          [5]  separation_weight
-// [6]  alignment_weight   [7]  cohesion_weight
-// [8]  margin             [9]  turn_factor
-// [10] cell_size          [11] _padding
+// Layout:
+// [0] separation_dist    [1] align_dist
+// [2] cohesion_dist      [3] max_speed
+// [4] max_force          [5] separation_weight
+// [6] alignment_weight   [7] cohesion_weight
+// [8] margin             [9] turn_factor
+// [10] cell_size         [11] _padding
 // [12-15] world_max (vec4)
 // [16-19] grid_dim (vec4, .w = numCells)
 
-// ── GPU globals ────────────────────────────────────────────
+// #endregion
+
+// #region GPU and rendering globals
 let scene, camera, renderer, boidInstancedMesh, controls;
 let gpuDevice;
 let useGPU = false;
@@ -36,14 +43,14 @@ let boidBuffer, cellHeadBuffer, boidNextBuffer;
 let matrixBuffer, matrixStagingBuffer;
 let uniformBuffer;
 
-// Pipelines (one per shader entry point)
+// Compute pipelines (one per shader entry point)
 let clearCellsPipeline, hashInsertPipeline, updateBoidsPipeline, computeMatricesPipeline;
 
-// Bind group layout + bind group
+// Bind group layout and bind group
 let bindGroupLayout;
 let bindGroup;
 
-// ── Perf instrumentation ───────────────────────────────────
+// Performance instrumentation
 let lastFrameTime = 0;
 let frameTimes = [];
 let lastFPSUpdate = 0;
@@ -52,8 +59,11 @@ const FPS_UPDATE_INTERVAL = 500;
 let simTimes = [];
 let renderTimes = [];
 
-// ── Helper functions ───────────────────────────────────────
+// #endregion
 
+// #region Helper functions
+
+// Return spawn bounds for a given world size
 function getSpawnBounds(worldSize)
 {
   return {
@@ -62,6 +72,7 @@ function getSpawnBounds(worldSize)
   };
 }
 
+// Calculate simulation world size based on boid count and density
 function calculateSimulationSize(count, density)
 {
   const baseVolume = BASE_SIMULATION_SIZE.x * BASE_SIMULATION_SIZE.y * BASE_SIMULATION_SIZE.z;
@@ -74,6 +85,7 @@ function calculateSimulationSize(count, density)
   };
 }
 
+// Compute grid dimensions from current simulation size and cell size
 function calculateGridDimensions()
 {
   // Cell size = max of behavior distances (ensures correctness)
@@ -84,6 +96,7 @@ function calculateGridDimensions()
   numCells = gridDim.x * gridDim.y * gridDim.z;
 }
 
+// Update or recreate the visual bounding box for the simulation
 function updateVisualBounds()
 {
   const oldBox = scene.getObjectByName('boid-bounds');
@@ -101,8 +114,11 @@ function updateVisualBounds()
   }
 }
 
-// ── Params management ──────────────────────────────────────
+// #endregion
 
+// #region Params management
+
+// Reset simulation parameters to sensible default values
 function resetParamsToDefaults()
 {
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
@@ -132,6 +148,7 @@ function resetParamsToDefaults()
   paramsArray[19] = numCells;
 }
 
+// Write the current params array to the GPU uniform buffer
 function syncParamsToGPU()
 {
   if (!gpuDevice || !uniformBuffer) return;
@@ -151,8 +168,11 @@ function syncParamsToGPU()
 
 resetParamsToDefaults();
 
-// ── GPU buffer creation ────────────────────────────────────
+// #endregion
 
+// #region GPU buffer creation
+
+// Initialize the storage buffer containing boid positions and velocities
 function initBoidBuffers(count)
 {
   const boidData = new Float32Array(count * 8);
@@ -177,6 +197,7 @@ function initBoidBuffers(count)
   boidBuffer.unmap();
 }
 
+// Initialize buffers used by the spatial hash (cell heads and next indices)
 function initSpatialHashBuffers()
 {
   calculateGridDimensions();
@@ -192,6 +213,7 @@ function initSpatialHashBuffers()
   });
 }
 
+// Create buffers for instance matrices and a staging buffer for readback
 function initMatrixBuffers()
 {
   const matSize = boidCount * 16 * 4; // 16 floats per mat4, 4 bytes per float
@@ -207,8 +229,11 @@ function initMatrixBuffers()
   });
 }
 
-// ── Bind groups ────────────────────────────────────────────
+// #endregion
 
+// #region Bind groups
+
+// Create bind groups for compute pipelines
 function createBindGroups()
 {
   bindGroup = gpuDevice.createBindGroup({
@@ -223,8 +248,11 @@ function createBindGroups()
   });
 }
 
-// ── WebGPU init ────────────────────────────────────────────
+// #endregion
 
+// #region WebGPU initialization
+
+// Initialize WebGPU device, shader modules, pipelines and buffers
 async function initWebGPU()
 {
   const adapter = await navigator.gpu?.requestAdapter();
@@ -237,7 +265,7 @@ async function initWebGPU()
   const shaderCode = await fetch('compute-shader.wgsl').then(r => r.text());
   const shaderModule = gpuDevice.createShaderModule({ code: shaderCode });
 
-  // Create buffers
+  // Create GPU buffers
   initBoidBuffers(boidCount);
   initSpatialHashBuffers();
   initMatrixBuffers();
@@ -262,7 +290,7 @@ async function initWebGPU()
 
   const pipelineLayout = gpuDevice.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
 
-  // Create all compute pipelines
+  // Create compute pipelines for each entry point
   const makePipeline = (entryPoint) => gpuDevice.createComputePipeline({
     layout: pipelineLayout,
     compute: { module: shaderModule, entryPoint }
@@ -276,7 +304,7 @@ async function initWebGPU()
   // Create bind groups
   createBindGroups();
 
-  // Init UI after pipeline is ready
+  // Initialize UI after pipelines are ready
   initUI();
 
   useGPU = true;
@@ -284,8 +312,11 @@ async function initWebGPU()
   return true;
 }
 
-// ── Three.js init ──────────────────────────────────────────
+// #endregion
 
+// #region Three.js initialization
+
+// Initialize Three.js scene, camera, renderer and controls
 function initThree()
 {
   scene = new THREE.Scene();
@@ -306,7 +337,7 @@ function initThree()
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
 
-  // Visual Bounds
+  // Visual bounds
   const boxGeom = new THREE.BoxGeometry(SIMULATION_SIZE.x, SIMULATION_SIZE.y, SIMULATION_SIZE.z);
   const edges = new THREE.EdgesGeometry(boxGeom);
   const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
@@ -325,6 +356,7 @@ function initThree()
   });
 }
 
+// Create or recreate the instanced mesh used to render boids
 function createInstancedMesh()
 {
   if (boidInstancedMesh) {
@@ -339,8 +371,11 @@ function createInstancedMesh()
   scene.add(boidInstancedMesh);
 }
 
-// ── Recreate / Reset ───────────────────────────────────────
+// #endregion
 
+// #region Recreate and reset helpers
+
+// Recreate GPU buffers and instance mesh for a new boid count
 function recreateBoids(newCount)
 {
   boidCount = newCount;
@@ -360,8 +395,9 @@ function recreateBoids(newCount)
   updateStartPauseButton();
 }
 
-// ── Uniform update from UI ─────────────────────────────────
+// Uniform updates from the UI
 
+// Read UI inputs and sync them into the params array
 function updateUniforms()
 {
   paramsArray[0] = parseFloat(document.getElementById('separation').value);
@@ -378,8 +414,11 @@ function updateUniforms()
   syncParamsToGPU();
 }
 
-// ── UI initialization ──────────────────────────────────────
+// #endregion
 
+// #region UI initialization
+
+// Initialize UI controls and wire up event handlers
 function initUI()
 {
   // Populate inputs with defaults
@@ -396,7 +435,7 @@ function initUI()
   document.getElementById('margin').value = paramsArray[8];
   document.getElementById('turn_factor').value = paramsArray[9];
 
-  // Boid count
+  // Boid count inputs and handlers
   const boidCountInput = document.getElementById('boid-count');
   const boidDensityInput = document.getElementById('boid-density');
   let boidCountUpdateTimer = null;
@@ -456,14 +495,14 @@ function initUI()
     bs.toggle();
   });
 
-  // Start/Pause
+  // Start/Pause control
   document.getElementById('start-pause-btn').addEventListener('click', () =>
   {
     isSimulationRunning = !isSimulationRunning;
     updateStartPauseButton();
   });
 
-  // Restart
+  // Restart control
   document.getElementById('restart-btn').addEventListener('click', () =>
   {
     const inputCount = parseInt(boidCountInput.value, 10);
@@ -478,14 +517,17 @@ function initUI()
     updateStartPauseButton();
   });
 
-  // Reset
+  // Reset control
   document.getElementById('reset-btn').addEventListener('click', resetSimulation);
 
   updateStartPauseButton();
 }
 
-// ── Frame loop ─────────────────────────────────────────────
+// #endregion
 
+// #region Main frame loop
+
+// Animation frame: run simulation and render
 function frame()
 {
   requestAnimationFrame(frame);
@@ -532,28 +574,28 @@ function frame()
     const wgBoids = Math.ceil(boidCount / WORKGROUP_SIZE);
     const wgCells = Math.ceil(numCells / WORKGROUP_SIZE);
 
-    // Pass 1: Clear cell heads
+    // Pass 1: clear cell heads
     const p1 = encoder.beginComputePass();
     p1.setPipeline(clearCellsPipeline);
     p1.setBindGroup(0, bindGroup);
     p1.dispatchWorkgroups(wgCells);
     p1.end();
 
-    // Pass 2: Hash insert
+    // Pass 2: hash insert
     const p2 = encoder.beginComputePass();
     p2.setPipeline(hashInsertPipeline);
     p2.setBindGroup(0, bindGroup);
     p2.dispatchWorkgroups(wgBoids);
     p2.end();
 
-    // Pass 3: Update boids
+    // Pass 3: update boids
     const p3 = encoder.beginComputePass();
     p3.setPipeline(updateBoidsPipeline);
     p3.setBindGroup(0, bindGroup);
     p3.dispatchWorkgroups(wgBoids);
     p3.end();
 
-    // Pass 4: Compute instance matrices
+    // Pass 4: compute instance matrices
     const p4 = encoder.beginComputePass();
     p4.setPipeline(computeMatricesPipeline);
     p4.setBindGroup(0, bindGroup);
@@ -567,7 +609,7 @@ function frame()
     const simEnd = performance.now();
     simTimes.push(simEnd - simStart);
 
-    // Async readback
+    // Async readback of instance matrices
     isMapping = true;
     matrixStagingBuffer.mapAsync(GPUMapMode.READ).then(() =>
     {
@@ -587,8 +629,11 @@ function frame()
   renderer.render(scene, camera);
 }
 
-// ── UI helpers ─────────────────────────────────────────────
+// #endregion
 
+// #region UI helper functions
+
+// Update the start/pause button appearance based on simulation state
 function updateStartPauseButton()
 {
   const btn = document.getElementById('start-pause-btn');
@@ -604,6 +649,7 @@ function updateStartPauseButton()
   }
 }
 
+// Reset simulation to default parameters and recreate boids
 function resetSimulation()
 {
   boidCount = 15000;
@@ -629,10 +675,14 @@ function resetSimulation()
   syncParamsToGPU();
 }
 
-// ── Boot ───────────────────────────────────────────────────
+// #endregion
+
+// #region Bootstrap
 
 initWebGPU().then(() =>
 {
   initThree();
   frame();
 });
+
+// #endregion
