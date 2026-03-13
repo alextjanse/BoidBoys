@@ -12,6 +12,11 @@
     body {
       margin: 0;
     }
+
+    :root {
+      --info-panel-reserved-height: 25vh;
+    }
+
     /* settings panel positioning and transitions */
     #settings-panel {
       position: fixed;
@@ -20,8 +25,111 @@
       width: 300px;
       z-index: 20;
       transition: transform 0.3s ease, opacity 0.3s ease;
-      max-height: calc(100vh - 20px);
+      max-height: calc(100vh - var(--info-panel-reserved-height) - 20px);
       overflow-y: auto;
+      scrollbar-gutter: stable;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(120, 120, 120, 0.55) transparent;
+    }
+
+    #settings-panel::-webkit-scrollbar {
+      width: 9px;
+    }
+
+    #settings-panel::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #settings-panel::-webkit-scrollbar-thumb {
+      background: rgba(120, 120, 120, 0.35);
+      border-radius: 10px;
+      transition: background-color 180ms ease;
+    }
+
+    #settings-panel:hover::-webkit-scrollbar-thumb {
+      background: rgba(120, 120, 120, 0.7);
+    }
+
+    #info-panel {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      color: #0f0;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 16px;
+    }
+
+    #settings-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-bottom: 0.65rem;
+      padding-bottom: 0.55rem;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      justify-content: center;
+    }
+
+    #benchmark-hud {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 30;
+      min-width: 240px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(10, 12, 20, 0.78);
+      color: #eaf2ff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.35;
+      backdrop-filter: blur(4px);
+      display: none;
+    }
+
+    #benchmark-hud.show {
+      display: block;
+    }
+
+    #benchmark-hud.warming {
+      border-color: rgba(255, 213, 79, 0.65);
+    }
+
+    #benchmark-hud.recording {
+      border-color: rgba(102, 245, 146, 0.65);
+    }
+
+    #benchmark-hud.completed {
+      border-color: rgba(92, 170, 255, 0.65);
+    }
+
+    #benchmark-hud .title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.9;
+    }
+
+    #benchmark-hud .status {
+      margin-top: 4px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    #benchmark-hud .countdown {
+      margin-top: 2px;
+      font-size: 12px;
+      opacity: 0.92;
+    }
+
+    #benchmark-hud .hint {
+      margin-top: 6px;
+      font-size: 11px;
+      opacity: 0.72;
     }
   </style>
 </head>
@@ -31,79 +139,84 @@
 
   <!-- Settings panel -->
   <div id="settings-panel" class="card">
+    <div id="settings-controls" class="card-body" style="padding: 0.75rem 0.75rem 0.2rem 0.75rem;">
+        <button id="start-pause-btn" class="btn btn-sm btn-success" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Start / Pause simulation"><i id="start-icon" class="bi bi-play-fill"></i></button>
+        <button id="restart-btn" class="btn btn-sm btn-secondary" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Restart with current settings"><i class="bi bi-arrow-repeat"></i></button>
+        <button id="reset-btn" class="btn btn-sm btn-info" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Reset all settings to defaults"><i class="bi bi-arrow-counterclockwise"></i></button>
+        <button id="benchmark-btn" class="btn btn-sm btn-warning" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Run benchmark (10s warm-up + 10s recording)"><i class="bi bi-speedometer2"></i></button>
+        <button id="import-report-btn" class="btn btn-sm btn-primary" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Open benchmark graph from JSON (supports multi-file comparison)"><i class="bi bi-filetype-json"></i></button>
+    </div>
     <div class="card-header d-flex align-items-center">
       <span class="me-auto">Settings</span>
-      <div class="d-flex gap-2 justify-content-end">
-        <button id="start-pause-btn" class="btn btn-sm btn-success"><i id="start-icon" class="bi bi-play-fill"></i></button>
-        <button id="restart-btn" class="btn btn-sm btn-secondary"><i class="bi bi-arrow-repeat"></i></button>
-        <button id="reset-btn" class="btn btn-sm btn-info"><i class="bi bi-arrow-counterclockwise"></i></button>
-        <button id="benchmark-btn" class="btn btn-sm btn-warning" title="Run Benchmark"><i class="bi bi-speedometer2"></i></button>
-        <button id="toggle-panel" class="btn btn-sm btn-outline-secondary">&minus;</button>
+      <div class="d-flex justify-content-end">
+        <button id="toggle-panel" class="btn btn-sm btn-outline-secondary" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Collapse / expand settings panel">&minus;</button>
       </div>
     </div>
+    
+
     <div id="settings-body" class="card-body collapse show" style="padding: 0.75rem;">
+
       <!-- Simulation -->
       <div class="row g-2 mb-1">
-        <label for="boid-count" class="col-6 col-form-label" style="font-size: 0.875rem;">Boid Count</label>
-        <div class="col-6"><input type="number" id="boid-count" class="form-control form-control-sm" min="100" max="500000" step="100" value="15000"></div>
+        <label for="boid-count" class="col-6 col-form-label" style="font-size: 0.875rem;">Boid Count <small class="text-muted">#</small></label>
+        <div class="col-6"><input type="number" id="boid-count" class="form-control form-control-sm" min="100" max="500000" step="100" value="100000" data-bs-toggle="tooltip" data-bs-placement="right" title="Total number of boids in the simulation. Range: higher than 0 (higher = heavier GPU load)"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="boid-density" class="col-6 col-form-label" style="font-size: 0.875rem;">Density</label>
-        <div class="col-6"><input type="number" id="boid-density" class="form-control form-control-sm" min="0.00001" max="0.0001" step="0.000001" value="0.000050"></div>
+        <label for="boid-density" class="col-6 col-form-label" style="font-size: 0.875rem;">Density <small class="text-muted">n/u³</small></label>
+        <div class="col-6"><input type="number" id="boid-density" class="form-control form-control-sm" min="0.00001" max="0.0001" step="0.000001" value="0.000050" data-bs-toggle="tooltip" data-bs-placement="right" title="Boids per unit volume — scales the simulation world size. Ideal: 0.00002 – 0.00005"></div>
       </div>
 
       <hr class="my-1">
 
       <!-- Shared params -->
       <div class="row g-2 mb-1">
-        <label for="max_speed" class="col-6 col-form-label" style="font-size: 0.875rem;">Max Speed</label>
-        <div class="col-6"><input type="number" id="max_speed" class="form-control form-control-sm" step="0.1" value="5"></div>
+        <label for="max_speed" class="col-6 col-form-label" style="font-size: 0.875rem;">Max Speed <small class="text-muted">u/s</small></label>
+        <div class="col-6"><input type="number" id="max_speed" class="form-control form-control-sm" step="0.1" value="5" data-bs-toggle="tooltip" data-bs-placement="right" title="Maximum movement speed for each boid. Ideal: 2 – 10 (too high = chaotic, too low = sluggish)"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="max_force" class="col-6 col-form-label" style="font-size: 0.875rem;">Max Force</label>
-        <div class="col-6"><input type="number" id="max_force" class="form-control form-control-sm" step="0.01" value="0.1"></div>
+        <label for="max_force" class="col-6 col-form-label" style="font-size: 0.875rem;">Max Force <small class="text-muted">u/s²</small></label>
+        <div class="col-6"><input type="number" id="max_force" class="form-control form-control-sm" step="0.01" value="0.1" data-bs-toggle="tooltip" data-bs-placement="right" title="Maximum steering force applied to a boid per frame. Ideal: 0.05 – 0.5 (too high = jittery turning)"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="margin" class="col-6 col-form-label" style="font-size: 0.875rem;">Wall Margin</label>
-        <div class="col-6"><input type="number" id="margin" class="form-control form-control-sm" step="1" value="100"></div>
+        <label for="margin" class="col-6 col-form-label" style="font-size: 0.875rem;">Wall Margin <small class="text-muted">u</small></label>
+        <div class="col-6"><input type="number" id="margin" class="form-control form-control-sm" step="1" value="100" data-bs-toggle="tooltip" data-bs-placement="right" title="Distance from a wall at which the turn force activates. Ideal: 50 – 200"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="turn_factor" class="col-6 col-form-label" style="font-size: 0.875rem;">Turn Factor</label>
-        <div class="col-6"><input type="number" id="turn_factor" class="form-control form-control-sm" step="0.01" value="0.2"></div>
+        <label for="turn_factor" class="col-6 col-form-label" style="font-size: 0.875rem;">Turn Factor <small class="text-muted">u/s²</small></label>
+        <div class="col-6"><input type="number" id="turn_factor" class="form-control form-control-sm" step="0.01" value="0.2" data-bs-toggle="tooltip" data-bs-placement="right" title="Strength of the steering force when a boid nears a wall. Ideal: 0.05 – 0.5 (too high = sharp bouncing)"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="separation" class="col-6 col-form-label" style="font-size: 0.875rem;">Sep. Distance</label>
-        <div class="col-6"><input type="number" id="separation" class="form-control form-control-sm" step="0.1" value="25"></div>
+        <label for="separation" class="col-6 col-form-label" style="font-size: 0.875rem;">Sep. Distance <small class="text-muted">u</small></label>
+        <div class="col-6"><input type="number" id="separation" class="form-control form-control-sm" step="0.1" value="25" data-bs-toggle="tooltip" data-bs-placement="right" title="Radius within which boids repel one another. Ideal: 10 – 40 (should be less than align/cohesion distance)"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="sep_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Sep. Weight</label>
-        <div class="col-6"><input type="number" id="sep_weight" class="form-control form-control-sm" step="0.1" value="1.5"></div>
+        <label for="sep_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Sep. Weight <small class="text-muted">×</small></label>
+        <div class="col-6"><input type="number" id="sep_weight" class="form-control form-control-sm" step="0.1" value="1.5" data-bs-toggle="tooltip" data-bs-placement="right" title="Multiplier for the separation steering force. Ideal: 1.0 – 3.0 (too high = boids scatter)"></div>
       </div>
 
       <!-- Boids params -->
       <hr class="my-1">
       <div class="row g-2 mb-1">
-        <label for="align" class="col-6 col-form-label" style="font-size: 0.875rem;">Align Distance</label>
-        <div class="col-6"><input type="number" id="align" class="form-control form-control-sm" step="0.1" value="50"></div>
+        <label for="align" class="col-6 col-form-label" style="font-size: 0.875rem;">Align Distance <small class="text-muted">u</small></label>
+        <div class="col-6"><input type="number" id="align" class="form-control form-control-sm" step="0.1" value="50" data-bs-toggle="tooltip" data-bs-placement="right" title="Radius within which boids try to match each other's velocity. Ideal: 30 – 80"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="cohesion" class="col-6 col-form-label" style="font-size: 0.875rem;">Cohesion Dist.</label>
-        <div class="col-6"><input type="number" id="cohesion" class="form-control form-control-sm" step="0.1" value="50"></div>
+        <label for="cohesion" class="col-6 col-form-label" style="font-size: 0.875rem;">Cohesion Dist. <small class="text-muted">u</small></label>
+        <div class="col-6"><input type="number" id="cohesion" class="form-control form-control-sm" step="0.1" value="50" data-bs-toggle="tooltip" data-bs-placement="right" title="Radius within which boids steer toward the group's centre of mass. Ideal: 30 – 80"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="align_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Align Weight</label>
-        <div class="col-6"><input type="number" id="align_weight" class="form-control form-control-sm" step="0.1" value="1.0"></div>
+        <label for="align_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Align Weight <small class="text-muted">×</small></label>
+        <div class="col-6"><input type="number" id="align_weight" class="form-control form-control-sm" step="0.1" value="1.0" data-bs-toggle="tooltip" data-bs-placement="right" title="Multiplier for the alignment steering force. Ideal: 0.5 – 2.0"></div>
       </div>
       <div class="row g-2 mb-1">
-        <label for="coh_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Coh. Weight</label>
-        <div class="col-6"><input type="number" id="coh_weight" class="form-control form-control-sm" step="0.1" value="0.5"></div>
+        <label for="coh_weight" class="col-6 col-form-label" style="font-size: 0.875rem;">Coh. Weight <small class="text-muted">×</small></label>
+        <div class="col-6"><input type="number" id="coh_weight" class="form-control form-control-sm" step="0.1" value="0.5" data-bs-toggle="tooltip" data-bs-placement="right" title="Multiplier for the cohesion steering force. Ideal: 0.3 – 1.5"></div>
       </div>
     </div>
   </div>
 
   <!-- Info display -->
-  <div
-    style="position:fixed; top:10px; left:10px; z-index:10; color:#0f0; background:rgba(0,0,0,0.7); padding:10px; border-radius:8px; font-family:monospace; font-size:16px;">
+  <div id="info-panel">
     <div id="info-app">Initializing...</div>
     <div id="info-fps">FPS:</div>
     <div id="info-boids">Boids:</div>
@@ -111,6 +224,16 @@
     <div id="info-gpu">Render:</div>
     <div id="gpu-status">GPU Status</div>
   </div>
+
+  <div id="benchmark-hud" aria-live="polite">
+    <div class="title">Benchmark</div>
+    <div class="status">Idle</div>
+    <div class="countdown"></div>
+    <div class="hint">Press Esc to cancel benchmark</div>
+  </div>
+
+  <input id="benchmark-json-input" type="file" accept="application/json,.json" multiple style="display:none;" />
+
   <!-- Bootstrap JS (with Popper) -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-" crossorigin="anonymous"></script>
   <script type="module" src="/js/boids.js"></script>
