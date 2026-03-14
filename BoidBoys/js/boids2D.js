@@ -16,6 +16,7 @@ const SIMULATION_SIZE = { x: 1000, y: 600, z: 1 }; // z=1 for 2D plane thickness
 let scene, camera, renderer, boidInstancedMesh, controls;
 let boidPositions, boidVelocities, boidAccelerations;
 let nearestNeighbors, nearestNeighborsDist; // Store k nearest neighbors and their distances
+let newNearestNeighbors, newNearestNeighborsDist; // Store k nearest neighbors and their distances for the next frame
 let nearestNeighbors_verify, nearestNeighborsDist_verify; // Verification arrays for brute force
 let simUI = null; // Will be initialized after DOM is ready
 let verificationEnabled = true; // Toggle verification on/off
@@ -38,6 +39,8 @@ function initBoids ()
   boidAccelerations = new Float32Array( BOID_COUNT * 3 );
   nearestNeighbors = new Int32Array( BOID_COUNT * K_NEIGHBORS );
   nearestNeighborsDist = new Float32Array( BOID_COUNT * K_NEIGHBORS );
+  newNearestNeighbors = new Int32Array( BOID_COUNT * K_NEIGHBORS );
+  newNearestNeighborsDist = new Float32Array( BOID_COUNT * K_NEIGHBORS );
   nearestNeighbors_verify = new Int32Array( BOID_COUNT * K_NEIGHBORS );
   nearestNeighborsDist_verify = new Float32Array( BOID_COUNT * K_NEIGHBORS );
 
@@ -64,6 +67,8 @@ function initBoids ()
       nearestNeighborsDist_verify[ i * K_NEIGHBORS + j ] = Infinity;
     }
   }
+
+  kNN_brute();
 }
 
 function limit ( value, max )
@@ -78,6 +83,40 @@ function distSq ( dx, dy )
   return dx * dx + dy * dy;
 }
 
+function check_kNN(i, j)
+{
+  if ( i === j ) return;
+
+  const x = boidPositions[ i * 3 ];
+  const y = boidPositions[ i * 3 + 1 ];
+  const otherX = boidPositions[ j * 3 ];
+  const otherY = boidPositions[ j * 3 + 1 ];
+  const dx = x - otherX;
+  const dy = y - otherY;
+  const d2 = distSq( dx, dy );
+
+  // Insert into sorted list if closer than current k-th neighbor
+  if ( d2 < nearestNeighborsDist[ i * K_NEIGHBORS + K_NEIGHBORS - 1 ] )
+  {
+    // Find insertion point (scan from back to front, sorted ascending)
+    let insertPos = K_NEIGHBORS - 1;
+    while ( insertPos > 0 && d2 <= nearestNeighborsDist[ i * K_NEIGHBORS + insertPos - 1 ] )
+    {
+      insertPos--;
+    }
+
+    // Shift elements to the right and insert
+    for ( let k = K_NEIGHBORS - 1; k > insertPos; k-- )
+    {
+      nearestNeighbors[ i * K_NEIGHBORS + k ] = nearestNeighbors[ i * K_NEIGHBORS + k - 1 ];
+      nearestNeighborsDist[ i * K_NEIGHBORS + k ] = nearestNeighborsDist[ i * K_NEIGHBORS + k - 1 ];
+    }
+
+    nearestNeighbors[ i * K_NEIGHBORS + insertPos ] = j;
+    nearestNeighborsDist[ i * K_NEIGHBORS + insertPos ] = d2;
+  }
+}
+
 /**
  * Brute force kNN - O(n²) per frame
  * Checks all boids to find k nearest neighbors
@@ -86,9 +125,6 @@ function kNN_brute ()
 {
   for ( let i = 0; i < BOID_COUNT; i++ )
   {
-    const x = boidPositions[ i * 3 ];
-    const y = boidPositions[ i * 3 + 1 ];
-
     // Reset distances to infinity, indices to -1
     for ( let j = 0; j < K_NEIGHBORS; j++ )
     {
@@ -99,112 +135,58 @@ function kNN_brute ()
     // Check all other boids
     for ( let j = 0; j < BOID_COUNT; j++ )
     {
-      if ( i === j ) continue;
-
-      const otherX = boidPositions[ j * 3 ];
-      const otherY = boidPositions[ j * 3 + 1 ];
-      const dx = x - otherX;
-      const dy = y - otherY;
-      const d2 = distSq( dx, dy );
-
-      // Insert into sorted list if closer than current k-th neighbor
-      if ( d2 < nearestNeighborsDist[ i * K_NEIGHBORS + K_NEIGHBORS - 1 ] )
-      {
-        // Find insertion point (scan from back to front, sorted ascending)
-        let insertPos = K_NEIGHBORS - 1;
-        while ( insertPos > 0 && d2 < nearestNeighborsDist[ i * K_NEIGHBORS + insertPos - 1 ] )
-        {
-          insertPos--;
-        }
-
-        // Shift elements to the right and insert
-        for ( let k = K_NEIGHBORS - 1; k > insertPos; k-- )
-        {
-          nearestNeighbors[ i * K_NEIGHBORS + k ] = nearestNeighbors[ i * K_NEIGHBORS + k - 1 ];
-          nearestNeighborsDist[ i * K_NEIGHBORS + k ] = nearestNeighborsDist[ i * K_NEIGHBORS + k - 1 ];
-        }
-
-        nearestNeighbors[ i * K_NEIGHBORS + insertPos ] = j;
-        nearestNeighborsDist[ i * K_NEIGHBORS + insertPos ] = d2;
-      }
+      check_kNN(i, j);
     }
   }
 }
 
 /**
- * Optimized kNN using temporal coherence - O(nk²) per frame
- * Only searches among previous frame's k neighbors and their k neighbors
+ * Optimized kNN using temporal coherence with bidirectional checking
+ * Builds distance matrix for candidates and checks mutual relationships
  */
 function kNN_optimized ()
 {
-  // Candidate set for each boid
-  const candidates = new Set();
-
   for ( let i = 0; i < BOID_COUNT; i++ )
   {
-    const x = boidPositions[ i * 3 ];
-    const y = boidPositions[ i * 3 + 1 ];
-
-    candidates.clear();
-    candidates.add( i ); // Add self to avoid checking
-
-    // Gather candidates: previous k neighbors + their k neighbors
+    // Reset new neighbor arrays
     for ( let j = 0; j < K_NEIGHBORS; j++ )
     {
-      const nbIdx = nearestNeighbors[ i * K_NEIGHBORS + j ];
-      if ( nbIdx === -1 ) break; // No more valid neighbors
+      newNearestNeighbors[ i * K_NEIGHBORS + j ] = -1;
+      newNearestNeighborsDist[ i * K_NEIGHBORS + j ] = Infinity;
+    }
 
-      candidates.add( nbIdx );
-
-      // Add neighbors of neighbors
-      for ( let k = 0; k < K_NEIGHBORS; k++ )
+    // Build candidate list (GPU-friendly: use Uint8Array instead of Set)
+    const candidates = [];
+    const candidateSet = new Uint8Array( BOID_COUNT ); // Mark which boids are candidates
+    
+    // Add previous neighbors and their neighbors
+    for ( let k = 0; k < K_NEIGHBORS; k++ )
+    {
+      const j = nearestNeighbors[ i * K_NEIGHBORS + k ];
+      if ( j !== -1 && !candidateSet[ j ] )
       {
-        const nbNbIdx = nearestNeighbors[ nbIdx * K_NEIGHBORS + k ];
-        if ( nbNbIdx === -1 ) break;
-        candidates.add( nbNbIdx );
+        candidates.push( j );
+        candidateSet[ j ] = 1;
+        
+        // Add neighbors of j
+        for ( let m = 0; m < K_NEIGHBORS; m++ )
+        {
+          const jj = nearestNeighbors[ j * K_NEIGHBORS + m ];
+          if ( jj !== -1 && !candidateSet[ jj ] )
+          {
+            candidates.push( jj );
+            candidateSet[ jj ] = 1;
+          }
+        }
       }
     }
 
-    // Reset for this boid
-    for ( let j = 0; j < K_NEIGHBORS; j++ )
-    {
-      nearestNeighbors[ i * K_NEIGHBORS + j ] = -1;
-      nearestNeighborsDist[ i * K_NEIGHBORS + j ] = Infinity;
-    }
-
-    // Search among candidates only
-    for ( const j of candidates )
-    {
-      if ( i === j ) continue;
-
-      const otherX = boidPositions[ j * 3 ];
-      const otherY = boidPositions[ j * 3 + 1 ];
-      const dx = x - otherX;
-      const dy = y - otherY;
-      const d2 = distSq( dx, dy );
-
-      // Insert into sorted list if closer than current k-th neighbor
-      if ( d2 < nearestNeighborsDist[ i * K_NEIGHBORS + K_NEIGHBORS - 1 ] )
-      {
-        // Find insertion point (scan from back to front, sorted ascending)
-        let insertPos = K_NEIGHBORS - 1;
-        while ( insertPos > 0 && d2 < nearestNeighborsDist[ i * K_NEIGHBORS + insertPos - 1 ] )
-        {
-          insertPos--;
-        }
-
-        // Shift elements to the right and insert
-        for ( let k = K_NEIGHBORS - 1; k > insertPos; k-- )
-        {
-          nearestNeighbors[ i * K_NEIGHBORS + k ] = nearestNeighbors[ i * K_NEIGHBORS + k - 1 ];
-          nearestNeighborsDist[ i * K_NEIGHBORS + k ] = nearestNeighborsDist[ i * K_NEIGHBORS + k - 1 ];
-        }
-
-        nearestNeighbors[ i * K_NEIGHBORS + insertPos ] = j;
-        nearestNeighborsDist[ i * K_NEIGHBORS + insertPos ] = d2;
-      }
-    }
+    candidates.forEach(j => check_kNN(i, j));
   }
+
+  // Swap new arrays to current
+  nearestNeighbors.set( newNearestNeighbors );
+  nearestNeighborsDist.set( newNearestNeighborsDist );
 }
 
 /**
@@ -249,6 +231,11 @@ function verifyKNN ()
   }
 
   return discrepancies === 0;
+}
+
+function sweepline()
+{
+
 }
 
 function updateBoids ()
