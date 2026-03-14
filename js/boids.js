@@ -61,11 +61,6 @@ const FPS_UPDATE_INTERVAL = 500;
 let simTimes = [];
 let renderTimes = [];
 const reportExporter = new PerformanceReportExporter();
-const hardwareInfo = {
-  cpu: `Logical Cores: ${navigator.hardwareConcurrency || 'Unknown'}`,
-  gpu: 'WebGPU Adapter (Unknown)',
-  os: navigator.userAgent,
-};
 
 // #endregion
 
@@ -267,10 +262,6 @@ async function initWebGPU()
   if (!adapter) {
     document.getElementById('info-app').innerText = "WebGPU not supported";
     return false;
-  }
-
-  if (adapter?.info?.description) {
-    hardwareInfo.gpu = adapter.info.description;
   }
 
   gpuDevice = await adapter.requestDevice();
@@ -560,7 +551,7 @@ function initUI()
     benchmarker.start();
   });
 
-  // Import benchmark JSON and open graph preview (single or comparison)
+  // Import benchmark LaTeX and open copy/comparison preview
   document.getElementById('import-report-btn').addEventListener('click', () =>
   {
     const input = document.getElementById('benchmark-json-input');
@@ -573,10 +564,10 @@ function initUI()
     if (files.length === 0) return;
 
     try {
-      await reportExporter.openBenchmarkPreviewFromJsonFiles(files);
+      await reportExporter.openBenchmarkPreviewFromTexFiles(files);
     } catch (error) {
-      console.error('Failed to import benchmark JSON:', error);
-      window.alert('Failed to import benchmark JSON. See console for details.');
+      console.error('Failed to import benchmark TeX:', error);
+      window.alert('Failed to import benchmark TeX. See console for details.');
     } finally {
       event.target.value = '';
     }
@@ -813,7 +804,11 @@ class BoidBenchmarker
           groupName: 'Boid Boys',
           version: 'v1.0.0',
         },
-        hardware: hardwareInfo,
+        hardware: {
+          cpu: '',
+          gpu: '',
+          os: '',
+        },
         metrics: {
           avgRenderTime: avg(this.renderFrameSamples),
           avgSimTime: avg(this.simFrameSamples),

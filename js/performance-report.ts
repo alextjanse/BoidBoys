@@ -50,7 +50,76 @@ type BenchmarkExportPayload = {
   };
 };
 
+export type ExportOutputFormat = "graph" | "latex";
+export type PreviewOutputFormat = "markdown" | "latex" | "graph";
+
+type ReportFormatOptions = {
+  exportFormat?: ExportOutputFormat;
+  previewFormat?: PreviewOutputFormat;
+};
+
+type ComparisonRow = {
+  benchmark: string;
+  boidCount: number;
+  separationWeight: number;
+  alignmentWeight: number;
+  cohesionWeight: number;
+  maxSpeed: number;
+  avgSimTime: number;
+  avgRenderTime: number;
+  avgFrameTime: number;
+  avgFps: number;
+  onePercentLowFrameTime: number;
+  onePercentLowFps: number;
+};
+
+type BenchmarkExportDialogResult = {
+  benchmarkName: string;
+  action: "export" | "copy";
+  cpuType: string;
+  gpuType: string;
+  exportJson: boolean;
+};
+
 export class PerformanceReportExporter {
+  private static readonly STORAGE_KEY_BENCHMARK_NAME = "boidBenchmark.benchmarkName";
+  private static readonly STORAGE_KEY_CPU_TYPE = "boidBenchmark.cpuType";
+  private static readonly STORAGE_KEY_GPU_TYPE = "boidBenchmark.gpuType";
+  private static readonly STORAGE_KEY_EXPORT_JSON = "boidBenchmark.exportJson";
+
+  private exportFormat: ExportOutputFormat = "graph";
+  private previewFormat: PreviewOutputFormat = "markdown";
+
+  public constructor(options?: ReportFormatOptions) {
+    this.setOutputFormats(options);
+  }
+
+  public setOutputFormats(options?: ReportFormatOptions): void {
+    if (!options) return;
+    if (options.exportFormat && this.isExportOutputFormat(options.exportFormat)) {
+      this.exportFormat = options.exportFormat;
+    }
+    if (options.previewFormat && this.isPreviewOutputFormat(options.previewFormat)) {
+      this.previewFormat = options.previewFormat;
+    }
+  }
+
+  public getExportFormat(): ExportOutputFormat {
+    return this.exportFormat;
+  }
+
+  public getPreviewFormat(): PreviewOutputFormat {
+    return this.previewFormat;
+  }
+
+  private isExportOutputFormat(value: string): value is ExportOutputFormat {
+    return value === "graph" || value === "latex";
+  }
+
+  private isPreviewOutputFormat(value: string): value is PreviewOutputFormat {
+    return value === "markdown" || value === "latex" || value === "graph";
+  }
+
   public async exportPerformanceReport(input: ExportInput): Promise<Blob | null> {
     const cleaned = input.frameTimes.filter((v) => Number.isFinite(v) && v > 0);
     if (cleaned.length === 0) {
@@ -61,21 +130,53 @@ export class PerformanceReportExporter {
     const date = new Date();
     const dateStamp = this.formatDateStamp(date);
     const boidLabel = this.formatBoidLabel(input.settings.boidCount);
-    const benchmarkName = await this.promptBenchmarkNameWithPreview(dateStamp, boidLabel);
-    if (!benchmarkName) {
+    const dialogResult = await this.promptBenchmarkNameWithPreview(
+      dateStamp,
+      boidLabel,
+      input.hardware.cpu,
+      input.hardware.gpu,
+    );
+    if (!dialogResult) {
+      return null;
+    }
+    const benchmarkName = dialogResult.benchmarkName;
+
+    const filenameBase = `${dateStamp}_${boidLabel}_Boids_${benchmarkName}`;
+    const stats = this.computeStats(cleaned);
+    let blob: Blob | null = null;
+
+    const exportInput: ExportInput = {
+      ...input,
+      hardware: {
+        cpu: dialogResult.cpuType,
+        gpu: dialogResult.gpuType,
+        os: "",
+      },
+    };
+
+    const payload = this.buildBenchmarkExportPayload(cleaned, exportInput, stats, date, filenameBase);
+
+    if (dialogResult.action === "copy") {
+      const content = this.exportFormat === "latex"
+        ? this.generateLatexTableForPayload(payload, benchmarkName)
+        : this.generateMarkdownReportForPayload(payload, benchmarkName);
+      this.openClipboardTextModal(content, this.exportFormat === "latex" ? "LaTeX Output" : "Markdown Output");
       return null;
     }
 
-    const filename = `${dateStamp}_${boidLabel}_Boids_${benchmarkName}.png`;
-    const filenameBase = `${dateStamp}_${boidLabel}_Boids_${benchmarkName}`;
-    const stats = this.computeStats(cleaned);
-    const canvas = this.renderReportCanvas(cleaned, input, stats, date);
+    if (this.exportFormat === "latex") {
+      const latexTable = this.generateLatexTableForPayload(payload, benchmarkName);
+      blob = this.downloadTextAsBlob(latexTable, `${filenameBase}.tex`, "application/x-tex");
+    } else {
+      const filename = `${filenameBase}.png`;
+      const canvas = this.renderReportCanvas(cleaned, input, stats, date);
+      blob = await this.canvasToPngBlob(canvas);
+      this.downloadBlob(blob, filename);
+    }
 
-    const blob = await this.canvasToPngBlob(canvas);
-    this.downloadBlob(blob, filename);
-
-    const payload = this.buildBenchmarkExportPayload(cleaned, input, stats, date, filenameBase);
-    this.downloadJson(payload, `${filenameBase}.json`);
+    if (dialogResult.exportJson) {
+      this.downloadJson(payload, `${filenameBase}.json`);
+    }
 
     return blob;
   }
@@ -116,9 +217,36 @@ export class PerformanceReportExporter {
 
     const dateStamp = this.formatDateStamp(new Date());
     const boidLabel = this.formatBoidLabel(payload.settings.boidCount);
-    const benchmarkName = await this.promptBenchmarkNameWithPreview(dateStamp, boidLabel);
-    if (!benchmarkName) {
+    const dialogResult = await this.promptBenchmarkNameWithPreview(
+      dateStamp,
+      boidLabel,
+      input.hardware.cpu,
+      input.hardware.gpu
+    );
+    if (!dialogResult) {
       return null;
+    }
+    const benchmarkName = dialogResult.benchmarkName;
+    const hardwareFromDialog: HardwareInfo = {
+      cpu: dialogResult.cpuType,
+      gpu: dialogResult.gpuType,
+      os: "",
+    };
+    payload.hardware = hardwareFromDialog;
+    input.hardware = hardwareFromDialog;
+
+    if (dialogResult.action === "copy") {
+      const content = this.exportFormat === "latex"
+        ? this.generateLatexTableForPayload(payload, benchmarkName)
+        : this.generateMarkdownReportForPayload(payload, benchmarkName);
+      this.openClipboardTextModal(content, this.exportFormat === "latex" ? "LaTeX Output" : "Markdown Output");
+      return null;
+    }
+
+    if (this.exportFormat === "latex") {
+      const filenameBase = `${dateStamp}_${boidLabel}_Boids_${benchmarkName}`;
+      const latexTable = this.generateLatexTableForPayload(payload, benchmarkName);
+      return this.downloadTextAsBlob(latexTable, `${filenameBase}.tex`, "application/x-tex");
     }
 
     const filename = `${dateStamp}_${boidLabel}_Boids_${benchmarkName}.png`;
@@ -128,40 +256,375 @@ export class PerformanceReportExporter {
     return blob;
   }
 
-  public async openBenchmarkPreviewFromJsonFiles(files: File[]): Promise<void> {
-    const parsed: Array<{ fileName: string; payload: BenchmarkExportPayload; }> = [];
+  public async openBenchmarkPreviewFromTexFiles(files: File[]): Promise<void> {
+    if (files.length === 0) return;
+
+    if (files.length === 1) {
+      const texText = await files[0].text();
+      if (!texText.trim()) {
+        window.alert("Selected TeX file is empty.");
+        return;
+      }
+      this.openClipboardTextModal(texText, "LaTeX Output");
+      return;
+    }
+
+    const parsed: Array<{ fileName: string; metrics: Map<string, string>; }> = [];
     const failed: string[] = [];
 
     for (const file of files) {
       try {
-        const raw = await file.text();
-        const json = JSON.parse(raw) as unknown;
-        const payload = this.parseBenchmarkPayload(json);
-        if (!payload) {
+        const texText = await file.text();
+        const metrics = this.parseLatexMetricRows(texText);
+        if (!metrics || metrics.size === 0) {
           failed.push(file.name);
           continue;
         }
-        parsed.push({ fileName: file.name, payload });
+        parsed.push({ fileName: file.name, metrics });
       } catch {
         failed.push(file.name);
       }
     }
 
     if (parsed.length === 0) {
-      window.alert("No valid benchmark JSON files were selected.");
+      window.alert("No valid benchmark TeX files were selected.");
       return;
     }
 
-    const previewCanvas = this.renderImportedComparisonCanvas(parsed);
-    const defaultBaseName = parsed.length === 1
-      ? (parsed[0].payload.filenameBase || parsed[0].fileName.replace(/\.json$/i, ""))
-      : `${this.formatDateStamp(new Date())}_Benchmark_Comparison`;
-
-    this.openGraphPreviewModal(previewCanvas, `${this.sanitizeFilePart(defaultBaseName)}.png`, parsed.length);
+    const comparisonTable = this.generateLatexComparisonFromMetricMaps(parsed);
+    this.openClipboardTextModal(comparisonTable, "LaTeX Comparison");
 
     if (failed.length > 0) {
-      window.alert(`Skipped ${failed.length} invalid file(s): ${failed.join(", ")}`);
+      window.alert(`Skipped ${failed.length} invalid TeX file(s): ${failed.join(", ")}`);
     }
+  }
+
+  private parseLatexMetricRows(texText: string): Map<string, string> | null {
+    const lines = texText.split(/\r?\n/);
+    const metrics = new Map<string, string>();
+    const rowPattern = /^(.*?)\s*&\s*(.*?)\s*\\\\\s*$/;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const match = trimmed.match(rowPattern);
+      if (!match) continue;
+
+      const key = this.unescapeLatex(match[1].trim());
+      const value = this.unescapeLatex(match[2].trim());
+      if (!key || key === "Metric") continue;
+      metrics.set(key, value);
+    }
+
+    return metrics.size > 0 ? metrics : null;
+  }
+
+  private generateLatexComparisonFromMetricMaps(
+    entries: Array<{ fileName: string; metrics: Map<string, string>; }>
+  ): string {
+    const metricOrder = [
+      "Benchmark",
+      "Boid Count",
+      "Separation Weight",
+      "Alignment Weight",
+      "Cohesion Weight",
+      "Max Speed",
+      "Update Frequency",
+      "Avg Simulation Time (ms)",
+      "Avg Render Time (ms)",
+      "Avg Frame Time (ms)",
+      "Avg FPS",
+      "1% Low Frame Time (ms)",
+      "1% Low FPS",
+      "CPU",
+      "GPU",
+    ];
+
+    const dynamicMetrics = new Set<string>();
+    entries.forEach((entry) => {
+      entry.metrics.forEach((_, key) => {
+        if (!metricOrder.includes(key)) dynamicMetrics.add(key);
+      });
+    });
+
+    const allMetrics = [...metricOrder, ...Array.from(dynamicMetrics)];
+    const rowEnd = " \\\\";
+    const headerCells = [
+      "Metric",
+      ...entries.map((entry) => entry.fileName.replace(/\.tex$/i, "")),
+    ];
+
+    const colSpec = `l${"p{0.22\\linewidth}".repeat(entries.length)}`;
+    const header = `${headerCells.map((cell) => this.escapeLatexForWrappedCell(cell)).join(" & ")}${rowEnd}`;
+
+    const rows = allMetrics.map((metric) => {
+      const values = entries.map((entry) => entry.metrics.get(metric) || "-");
+      return [metric, ...values].map((cell) => this.escapeLatexForWrappedCell(cell)).join(" & ") + rowEnd;
+    });
+
+    return [
+      "\\begin{table}[htbp]",
+      "\\centering",
+      "\\rowcolors{2}{gray!15}{white}",
+      `\\begin{tabular}{${colSpec}}`,
+      "\\hline",
+      header,
+      "\\hline",
+      ...rows,
+      "\\hline",
+      "\\end{tabular}",
+      "\\caption{Boid benchmark comparison (imported TeX reports)}",
+      "\\label{tab:boid-benchmark-tex-comparison}",
+      "\\end{table}",
+      "",
+    ].join("\n");
+  }
+
+  private unescapeLatex(value: string): string {
+    return value
+      .replace(/\\allowbreak\{\}/g, "")
+      .replace(/\\textbackslash\{\}/g, "\\")
+      .replace(/\\textasciitilde\{\}/g, "~")
+      .replace(/\\textasciicircum\{\}/g, "^")
+      .replace(/\\&/g, "&")
+      .replace(/\\%/g, "%")
+      .replace(/\\\$/g, "$")
+      .replace(/\\#/g, "#")
+      .replace(/\\_/g, "_")
+      .replace(/\\\{/g, "{")
+      .replace(/\\\}/g, "}");
+  }
+
+  // Adds safe LaTeX break opportunities for long tokens such as names and hardware model strings.
+  private escapeLatexForWrappedCell(value: string): string {
+    return this.escapeLatex(value)
+      .replace(/\\_/g, "\\_\\allowbreak{}")
+      .replace(/-/g, "-\\allowbreak{}")
+      .replace(/\//g, "/\\allowbreak{}")
+      .replace(/\\textbackslash\{\}/g, "\\textbackslash{}\\allowbreak{}");
+  }
+
+  private buildComparisonRows(entries: Array<{ fileName: string; payload: BenchmarkExportPayload; }>): ComparisonRow[] {
+    return entries.map((entry) => ({
+      benchmark: entry.fileName.replace(/\.json$/i, ""),
+      boidCount: entry.payload.settings.boidCount,
+      separationWeight: entry.payload.settings.separationWeight,
+      alignmentWeight: entry.payload.settings.alignmentWeight,
+      cohesionWeight: entry.payload.settings.cohesionWeight,
+      maxSpeed: entry.payload.settings.maxSpeed,
+      avgSimTime: entry.payload.metrics.avgSimTime,
+      avgRenderTime: entry.payload.metrics.avgRenderTime,
+      avgFrameTime: entry.payload.stats.avgFrameTime,
+      avgFps: entry.payload.stats.avgFps,
+      onePercentLowFrameTime: entry.payload.stats.onePercentLowFrameTime,
+      onePercentLowFps: entry.payload.stats.onePercentLowFps,
+    }));
+  }
+
+  private generateMarkdownComparisonTable(rows: ComparisonRow[]): string {
+    const headers = [
+      "Benchmark",
+      "Boids",
+      "Sep W",
+      "Align W",
+      "Coh W",
+      "Max Speed",
+      "Avg Sim (ms)",
+      "Avg Render (ms)",
+      "Avg Frame (ms)",
+      "Avg FPS",
+      "1% Low (ms)",
+      "1% Low FPS",
+    ];
+
+    const separator = headers.map(() => "---");
+    const lines = [
+      `| ${headers.join(" | ")} |`,
+      `| ${separator.join(" | ")} |`,
+      ...rows.map((row) => {
+        const values = [
+          this.escapeMarkdownCell(row.benchmark),
+          this.formatInteger(row.boidCount),
+          this.formatNumber(row.separationWeight, 2),
+          this.formatNumber(row.alignmentWeight, 2),
+          this.formatNumber(row.cohesionWeight, 2),
+          this.formatNumber(row.maxSpeed, 2),
+          this.formatNumber(row.avgSimTime, 2),
+          this.formatNumber(row.avgRenderTime, 2),
+          this.formatNumber(row.avgFrameTime, 2),
+          this.formatNumber(row.avgFps, 1),
+          this.formatNumber(row.onePercentLowFrameTime, 2),
+          this.formatNumber(row.onePercentLowFps, 1),
+        ];
+        return `| ${values.join(" | ")} |`;
+      }),
+    ];
+
+    return [
+      "## Benchmark Comparison",
+      "",
+      "Table-first output for PR comments/previews.",
+      "",
+      ...lines,
+      "",
+      "Notes:",
+      "- Avg values are computed from captured benchmark frame times.",
+      "- JSON export remains the canonical historical record.",
+      "",
+    ].join("\n");
+  }
+
+  private generateLatexComparisonTable(rows: ComparisonRow[]): string {
+    const rowEnd = " \\\\";
+    const header = [
+      "Benchmark",
+      "Boids",
+      "Sep W",
+      "Align W",
+      "Coh W",
+      "Max Speed",
+      "Avg Sim (ms)",
+      "Avg Render (ms)",
+      "Avg Frame (ms)",
+      "Avg FPS",
+      "1\\% Low (ms)",
+      "1\\% Low FPS",
+    ].join(" & ");
+
+    const body = rows
+      .map((row) => [
+        this.escapeLatex(row.benchmark),
+        this.formatInteger(row.boidCount),
+        this.formatNumber(row.separationWeight, 2),
+        this.formatNumber(row.alignmentWeight, 2),
+        this.formatNumber(row.cohesionWeight, 2),
+        this.formatNumber(row.maxSpeed, 2),
+        this.formatNumber(row.avgSimTime, 2),
+        this.formatNumber(row.avgRenderTime, 2),
+        this.formatNumber(row.avgFrameTime, 2),
+        this.formatNumber(row.avgFps, 1),
+        this.formatNumber(row.onePercentLowFrameTime, 2),
+        this.formatNumber(row.onePercentLowFps, 1),
+      ].join(" & ") + rowEnd)
+      .join("\n");
+
+    return [
+      "\\begin{table}[htbp]",
+      "\\centering",
+      "\\small",
+      "\\rowcolors{2}{gray!15}{white}",
+      "\\begin{tabular}{lrrrrrrrrrrr}",
+      "\\hline",
+      `${header} \\\\`,
+      "\\hline",
+      body,
+      "\\hline",
+      "\\end{tabular}",
+      "\\caption{Boid benchmark comparison summary}",
+      "\\label{tab:boid-benchmark-comparison}",
+      "\\end{table}",
+      "",
+    ].join("\n");
+  }
+
+  private generateLatexTableForPayload(payload: BenchmarkExportPayload, benchmarkName: string): string {
+    const rowEnd = " \\\\";
+    const rows: Array<[string, string]> = [
+      ["Benchmark", benchmarkName],
+      ["Boid Count", this.formatInteger(payload.settings.boidCount)],
+      ["Separation Weight", this.formatNumber(payload.settings.separationWeight, 2)],
+      ["Alignment Weight", this.formatNumber(payload.settings.alignmentWeight, 2)],
+      ["Cohesion Weight", this.formatNumber(payload.settings.cohesionWeight, 2)],
+      ["Max Speed", this.formatNumber(payload.settings.maxSpeed, 2)],
+      ["Update Frequency", this.formatInteger(payload.settings.updateFrequency ?? 0)],
+      ["Avg Simulation Time (ms)", this.formatNumber(payload.metrics.avgSimTime, 2)],
+      ["Avg Render Time (ms)", this.formatNumber(payload.metrics.avgRenderTime, 2)],
+      ["Avg Frame Time (ms)", this.formatNumber(payload.stats.avgFrameTime, 2)],
+      ["Avg FPS", this.formatNumber(payload.stats.avgFps, 1)],
+      ["1% Low Frame Time (ms)", this.formatNumber(payload.stats.onePercentLowFrameTime, 2)],
+      ["1% Low FPS", this.formatNumber(payload.stats.onePercentLowFps, 1)],
+      ["CPU", payload.hardware.cpu],
+      ["GPU", payload.hardware.gpu],
+    ];
+
+    const body = rows
+      .map(([label, value]) => `${this.escapeLatex(label)} & ${this.escapeLatexForWrappedCell(value)}${rowEnd}`)
+      .join("\n");
+
+    return [
+      "\\begin{table}[htbp]",
+      "\\centering",
+      "\\rowcolors{2}{gray!15}{white}",
+      "\\begin{tabular}{l p{0.68\\linewidth}}",
+      "\\hline",
+      `Metric & Value${rowEnd}`,
+      "\\hline",
+      body,
+      "\\hline",
+      "\\end{tabular}",
+      `\\caption{Boid benchmark report: ${this.escapeLatexForWrappedCell(benchmarkName)}}`,
+      "\\label{tab:boid-benchmark-report}",
+      "\\end{table}",
+      "",
+    ].join("\n");
+  }
+
+  private generateMarkdownReportForPayload(payload: BenchmarkExportPayload, benchmarkName: string): string {
+    const rows: Array<[string, string]> = [
+      ["Benchmark", benchmarkName],
+      ["Boid Count", this.formatInteger(payload.settings.boidCount)],
+      ["Separation Weight", this.formatNumber(payload.settings.separationWeight, 2)],
+      ["Alignment Weight", this.formatNumber(payload.settings.alignmentWeight, 2)],
+      ["Cohesion Weight", this.formatNumber(payload.settings.cohesionWeight, 2)],
+      ["Max Speed", this.formatNumber(payload.settings.maxSpeed, 2)],
+      ["Update Frequency", this.formatInteger(payload.settings.updateFrequency ?? 0)],
+      ["Avg Simulation Time (ms)", this.formatNumber(payload.metrics.avgSimTime, 2)],
+      ["Avg Render Time (ms)", this.formatNumber(payload.metrics.avgRenderTime, 2)],
+      ["Avg Frame Time (ms)", this.formatNumber(payload.stats.avgFrameTime, 2)],
+      ["Avg FPS", this.formatNumber(payload.stats.avgFps, 1)],
+      ["1% Low Frame Time (ms)", this.formatNumber(payload.stats.onePercentLowFrameTime, 2)],
+      ["1% Low FPS", this.formatNumber(payload.stats.onePercentLowFps, 1)],
+      ["CPU", payload.hardware.cpu],
+      ["GPU", payload.hardware.gpu],
+    ];
+
+    const lines = rows.map(([metric, value]) => `| ${this.escapeMarkdownCell(metric)} | ${this.escapeMarkdownCell(value)} |`);
+
+    return [
+      "## Benchmark Report",
+      "",
+      "| Metric | Value |",
+      "| --- | --- |",
+      ...lines,
+      "",
+    ].join("\n");
+  }
+
+  private formatInteger(value: number): string {
+    if (!Number.isFinite(value)) return "0";
+    return Math.round(value).toString();
+  }
+
+  private formatNumber(value: number, decimals = 2): string {
+    if (!Number.isFinite(value)) return "0";
+    return value.toFixed(decimals);
+  }
+
+  private escapeMarkdownCell(value: string): string {
+    return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  }
+
+  private escapeLatex(value: string): string {
+    return value
+      .replace(/\\/g, "\\textbackslash{}")
+      .replace(/&/g, "\\&")
+      .replace(/%/g, "\\%")
+      .replace(/\$/g, "\\$")
+      .replace(/#/g, "\\#")
+      .replace(/_/g, "\\_")
+      .replace(/{/g, "\\{")
+      .replace(/}/g, "\\}")
+      .replace(/~/g, "\\textasciitilde{}")
+      .replace(/\^/g, "\\textasciicircum{}");
   }
 
   private renderImportedComparisonCanvas(
@@ -531,6 +994,256 @@ export class PerformanceReportExporter {
     modal.appendChild(actions);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+  }
+
+  private openTablePreviewModal(
+    content: string,
+    defaultFilename: string,
+    format: "markdown" | "latex",
+    seriesCount: number
+  ): void {
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.background = "rgba(0,0,0,0.45)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.zIndex = "10010";
+
+    const modal = document.createElement("div");
+    modal.style.width = "min(94vw, 1320px)";
+    modal.style.maxHeight = "90vh";
+    modal.style.background = "#FFFFFF";
+    modal.style.border = "1px solid #DADADA";
+    modal.style.borderRadius = "12px";
+    modal.style.boxShadow = "0 20px 60px rgba(0,0,0,0.25)";
+    modal.style.padding = "16px";
+    modal.style.display = "flex";
+    modal.style.flexDirection = "column";
+    modal.style.gap = "12px";
+    modal.style.fontFamily = "Arial, sans-serif";
+
+    const title = document.createElement("div");
+    title.style.fontSize = "22px";
+    title.style.fontWeight = "700";
+    title.textContent = seriesCount > 1
+      ? `${format === "markdown" ? "Markdown" : "LaTeX"} Comparison Table`
+      : `${format === "markdown" ? "Markdown" : "LaTeX"} Benchmark Table`;
+
+    const subtitle = document.createElement("div");
+    subtitle.style.fontSize = "14px";
+    subtitle.style.color = "#555";
+    subtitle.textContent = format === "markdown"
+      ? "PR-ready table output. Copy or export as .md."
+      : "LaTeX-ready table output with escaped special characters.";
+
+    const viewport = document.createElement("div");
+    viewport.style.overflow = "auto";
+    viewport.style.border = "1px solid #E5E5E5";
+    viewport.style.borderRadius = "8px";
+    viewport.style.background = "#FAFAFA";
+    viewport.style.padding = "10px";
+
+    const pre = document.createElement("pre");
+    pre.style.margin = "0";
+    pre.style.fontSize = "13px";
+    pre.style.lineHeight = "1.45";
+    pre.style.fontFamily = "Consolas, 'Courier New', monospace";
+    pre.style.whiteSpace = "pre";
+    pre.textContent = content;
+    viewport.appendChild(pre);
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.justifyContent = "flex-end";
+    actions.style.gap = "10px";
+
+    const close = document.createElement("button");
+    close.textContent = "Close";
+    close.style.padding = "8px 12px";
+    close.style.border = "1px solid #CCC";
+    close.style.background = "#FFF";
+    close.style.borderRadius = "8px";
+    close.style.cursor = "pointer";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = format === "markdown" ? "Copy Markdown" : "Copy LaTeX";
+    copyBtn.style.padding = "8px 12px";
+    copyBtn.style.border = "none";
+    copyBtn.style.background = "#0AA174";
+    copyBtn.style.color = "#FFF";
+    copyBtn.style.borderRadius = "8px";
+    copyBtn.style.cursor = "pointer";
+
+    const exportBtn = document.createElement("button");
+    exportBtn.textContent = format === "markdown" ? "Export .md" : "Export .tex";
+    exportBtn.style.padding = "8px 12px";
+    exportBtn.style.border = "none";
+    exportBtn.style.background = "#2F80ED";
+    exportBtn.style.color = "#FFF";
+    exportBtn.style.borderRadius = "8px";
+    exportBtn.style.cursor = "pointer";
+
+    const finish = () => {
+      window.removeEventListener("keydown", onEsc);
+      overlay.remove();
+    };
+
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        finish();
+      }
+    };
+
+    close.addEventListener("click", finish);
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(content);
+      } catch {
+        window.alert("Copy failed. Clipboard access may be blocked by the browser.");
+      }
+    });
+    exportBtn.addEventListener("click", () => {
+      const mimeType = format === "markdown" ? "text/markdown" : "application/x-tex";
+      this.downloadTextAsBlob(content, defaultFilename, mimeType);
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) finish();
+    });
+    window.addEventListener("keydown", onEsc);
+
+    actions.appendChild(close);
+    actions.appendChild(copyBtn);
+    actions.appendChild(exportBtn);
+    modal.appendChild(title);
+    modal.appendChild(subtitle);
+    modal.appendChild(viewport);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
+
+  private openClipboardTextModal(content: string, titleLabel: string): void {
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.background = "rgba(0,0,0,0.45)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.zIndex = "10010";
+
+    const modal = document.createElement("div");
+    modal.style.width = "min(94vw, 980px)";
+    modal.style.maxHeight = "90vh";
+    modal.style.background = "#FFFFFF";
+    modal.style.border = "1px solid #DADADA";
+    modal.style.borderRadius = "12px";
+    modal.style.boxShadow = "0 20px 60px rgba(0,0,0,0.25)";
+    modal.style.padding = "16px";
+    modal.style.display = "flex";
+    modal.style.flexDirection = "column";
+    modal.style.gap = "12px";
+    modal.style.fontFamily = "Arial, sans-serif";
+
+    const title = document.createElement("div");
+    title.style.fontSize = "22px";
+    title.style.fontWeight = "700";
+    title.textContent = `${titleLabel} Clipboard`;
+
+    const subtitle = document.createElement("div");
+    subtitle.style.fontSize = "14px";
+    subtitle.style.color = "#555";
+    subtitle.textContent = "The text below is what will be copied to your clipboard.";
+
+    const isLatex = titleLabel.toLowerCase().includes("latex");
+    let preambleNote: HTMLElement | null = null;
+    if (isLatex) {
+      preambleNote = document.createElement("div");
+      preambleNote.style.fontSize = "13px";
+      preambleNote.style.background = "#EEF6FF";
+      preambleNote.style.border = "1px solid #B8D8F8";
+      preambleNote.style.borderRadius = "8px";
+      preambleNote.style.padding = "10px 14px";
+      preambleNote.style.color = "#1A4A7A";
+      preambleNote.innerHTML =
+        "<strong>Required preamble:</strong> add the following to your LaTeX document header before using this table:<br>" +
+        "<code style=\"font-size:12px;background:#DDEEFF;padding:2px 6px;border-radius:4px;\">\\usepackage[table]{xcolor}</code>";
+    }
+
+    const textArea = document.createElement("textarea");
+    textArea.readOnly = true;
+    textArea.value = content;
+    textArea.style.width = "100%";
+    textArea.style.minHeight = "360px";
+    textArea.style.resize = "vertical";
+    textArea.style.border = "1px solid #E5E5E5";
+    textArea.style.borderRadius = "8px";
+    textArea.style.padding = "10px";
+    textArea.style.fontSize = "13px";
+    textArea.style.lineHeight = "1.45";
+    textArea.style.fontFamily = "Consolas, 'Courier New', monospace";
+    textArea.style.background = "#FAFAFA";
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.justifyContent = "flex-end";
+    actions.style.gap = "10px";
+
+    const close = document.createElement("button");
+    close.textContent = "Close";
+    close.style.padding = "8px 12px";
+    close.style.border = "1px solid #CCC";
+    close.style.background = "#FFF";
+    close.style.borderRadius = "8px";
+    close.style.cursor = "pointer";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = "Copy";
+    copyBtn.style.padding = "8px 12px";
+    copyBtn.style.border = "none";
+    copyBtn.style.background = "#0AA174";
+    copyBtn.style.color = "#FFF";
+    copyBtn.style.borderRadius = "8px";
+    copyBtn.style.cursor = "pointer";
+
+    const finish = () => {
+      window.removeEventListener("keydown", onEsc);
+      overlay.remove();
+    };
+
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        finish();
+      }
+    };
+
+    close.addEventListener("click", finish);
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(content);
+        copyBtn.textContent = "Copied";
+      } catch {
+        window.alert("Copy failed. Clipboard access may be blocked by the browser.");
+      }
+    });
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) finish();
+    });
+    window.addEventListener("keydown", onEsc);
+
+    actions.appendChild(close);
+    actions.appendChild(copyBtn);
+    modal.appendChild(title);
+    modal.appendChild(subtitle);
+    if (preambleNote) modal.appendChild(preambleNote);
+    modal.appendChild(textArea);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    textArea.focus();
   }
 
   private parseBenchmarkPayload(data: unknown): BenchmarkExportPayload | null {
@@ -1122,9 +1835,6 @@ export class PerformanceReportExporter {
       colW - 40,
       "Hardware & Software",
       [
-        `CPU: ${input.hardware.cpu}`,
-        `GPU: ${input.hardware.gpu}`,
-        `OS: ${input.hardware.os}`,
         "Platform: Chrome / WebGPU",
       ],
       text,
@@ -1206,7 +1916,46 @@ export class PerformanceReportExporter {
     return input.replace(/[/\\?%*:|"<>]/g, "").trim().replace(/\s+/g, "_");
   }
 
-  private promptBenchmarkNameWithPreview(dateStamp: string, boidLabel: string): Promise<string | null> {
+  private loadRememberedInput(key: string): string {
+    try {
+      return localStorage.getItem(key) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  private saveRememberedInput(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Ignore storage failures (private mode, blocked storage, etc.)
+    }
+  }
+
+  private loadRememberedBoolean(key: string, fallback: boolean): boolean {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return fallback;
+      return raw === "true";
+    } catch {
+      return fallback;
+    }
+  }
+
+  private saveRememberedBoolean(key: string, value: boolean): void {
+    try {
+      localStorage.setItem(key, value ? "true" : "false");
+    } catch {
+      // Ignore storage failures (private mode, blocked storage, etc.)
+    }
+  }
+
+  private promptBenchmarkNameWithPreview(
+    dateStamp: string,
+    boidLabel: string,
+    initialCpu: string,
+    initialGpu: string
+  ): Promise<BenchmarkExportDialogResult | null> {
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.style.position = "fixed";
@@ -1227,13 +1976,14 @@ export class PerformanceReportExporter {
       modal.style.fontFamily = "Arial, sans-serif";
 
       const title = document.createElement("h3");
-      title.textContent = "Benchmark Name";
+      title.textContent = "Benchmark Export";
       title.style.margin = "0 0 12px 0";
       title.style.fontSize = "20px";
 
       const input = document.createElement("input");
       input.type = "text";
       input.placeholder = "Enter label (e.g. RTX4070_TestA)";
+      input.value = this.loadRememberedInput(PerformanceReportExporter.STORAGE_KEY_BENCHMARK_NAME);
       input.style.width = "100%";
       input.style.padding = "10px";
       input.style.border = "1px solid #CCCCCC";
@@ -1246,6 +1996,40 @@ export class PerformanceReportExporter {
       help.style.color = "#666";
       help.style.fontSize = "13px";
 
+      const cpuLabel = document.createElement("label");
+      cpuLabel.textContent = "CPU Type";
+      cpuLabel.style.display = "block";
+      cpuLabel.style.marginTop = "10px";
+      cpuLabel.style.fontSize = "13px";
+      cpuLabel.style.color = "#444";
+
+      const cpuInput = document.createElement("input");
+      cpuInput.type = "text";
+      cpuInput.placeholder = "13th Gen Intel(R) Core(TM) i9-13900H";
+      cpuInput.value = initialCpu || this.loadRememberedInput(PerformanceReportExporter.STORAGE_KEY_CPU_TYPE);
+      cpuInput.style.width = "100%";
+      cpuInput.style.padding = "10px";
+      cpuInput.style.border = "1px solid #CCCCCC";
+      cpuInput.style.borderRadius = "8px";
+      cpuInput.style.fontSize = "14px";
+
+      const gpuLabel = document.createElement("label");
+      gpuLabel.textContent = "GPU Type";
+      gpuLabel.style.display = "block";
+      gpuLabel.style.marginTop = "10px";
+      gpuLabel.style.fontSize = "13px";
+      gpuLabel.style.color = "#444";
+
+      const gpuInput = document.createElement("input");
+      gpuInput.type = "text";
+      gpuInput.placeholder = "NVIDIA GeForce RTX 4060 Laptop GPU";
+      gpuInput.value = initialGpu || this.loadRememberedInput(PerformanceReportExporter.STORAGE_KEY_GPU_TYPE);
+      gpuInput.style.width = "100%";
+      gpuInput.style.padding = "10px";
+      gpuInput.style.border = "1px solid #CCCCCC";
+      gpuInput.style.borderRadius = "8px";
+      gpuInput.style.fontSize = "14px";
+
       const preview = document.createElement("div");
       preview.style.marginTop = "12px";
       preview.style.padding = "10px";
@@ -1254,22 +2038,31 @@ export class PerformanceReportExporter {
       preview.style.fontSize = "14px";
       preview.style.color = "#222";
 
+      const exportJsonRow = document.createElement("label");
+      exportJsonRow.style.marginTop = "10px";
+      exportJsonRow.style.display = "flex";
+      exportJsonRow.style.alignItems = "center";
+      exportJsonRow.style.gap = "8px";
+      exportJsonRow.style.fontSize = "13px";
+      exportJsonRow.style.color = "#444";
+
+      const exportJsonCheckbox = document.createElement("input");
+      exportJsonCheckbox.type = "checkbox";
+      exportJsonCheckbox.checked = this.loadRememberedBoolean(PerformanceReportExporter.STORAGE_KEY_EXPORT_JSON, true);
+
+      const exportJsonLabelText = document.createElement("span");
+      exportJsonLabelText.textContent = "Also export JSON with intermediate benchmark data";
+      exportJsonRow.appendChild(exportJsonCheckbox);
+      exportJsonRow.appendChild(exportJsonLabelText);
+
       const actions = document.createElement("div");
       actions.style.display = "flex";
       actions.style.justifyContent = "flex-end";
       actions.style.gap = "10px";
       actions.style.marginTop = "14px";
 
-      const cancel = document.createElement("button");
-      cancel.textContent = "Cancel";
-      cancel.style.padding = "8px 12px";
-      cancel.style.border = "1px solid #CCC";
-      cancel.style.background = "#FFF";
-      cancel.style.borderRadius = "8px";
-      cancel.style.cursor = "pointer";
-
       const save = document.createElement("button");
-      save.textContent = "Export PNG";
+      save.textContent = "Export LaTeX";
       save.style.padding = "8px 12px";
       save.style.border = "none";
       save.style.background = "#2F80ED";
@@ -1277,13 +2070,41 @@ export class PerformanceReportExporter {
       save.style.borderRadius = "8px";
       save.style.cursor = "pointer";
 
+      const copy = document.createElement("button");
+      copy.textContent = "Copy LaTeX";
+      copy.style.padding = "8px 12px";
+      copy.style.border = "none";
+      copy.style.background = "#0AA174";
+      copy.style.color = "#FFF";
+      copy.style.borderRadius = "8px";
+      copy.style.cursor = "pointer";
+
       const updatePreview = () => {
+        const extension = "tex";
         const safe = this.sanitizeFilePart(input.value || "Untitled");
         const name = safe || "Untitled";
-        preview.textContent = `Filename: ${dateStamp}_${boidLabel}_Boids_${name}.png`;
+        preview.textContent = `Filename: ${dateStamp}_${boidLabel}_Boids_${name}.${extension}`;
       };
 
-      const finish = (value: string | null) => {
+      const collectDialogData = (): { benchmarkName: string; cpuType: string; gpuType: string; exportJson: boolean; } | null => {
+        const benchmarkName = this.sanitizeFilePart(input.value || "Untitled") || "Untitled";
+        const cpuType = cpuInput.value.trim();
+        const gpuType = gpuInput.value.trim();
+        if (!cpuType || !gpuType) {
+          window.alert("Please fill in both CPU Type and GPU Type.");
+          return null;
+        }
+        const exportJson = exportJsonCheckbox.checked;
+
+        this.saveRememberedInput(PerformanceReportExporter.STORAGE_KEY_BENCHMARK_NAME, benchmarkName);
+        this.saveRememberedInput(PerformanceReportExporter.STORAGE_KEY_CPU_TYPE, cpuType);
+        this.saveRememberedInput(PerformanceReportExporter.STORAGE_KEY_GPU_TYPE, gpuType);
+        this.saveRememberedBoolean(PerformanceReportExporter.STORAGE_KEY_EXPORT_JSON, exportJson);
+
+        return { benchmarkName, cpuType, gpuType, exportJson };
+      };
+
+      const finish = (value: BenchmarkExportDialogResult | null) => {
         window.removeEventListener("keydown", onEsc);
         overlay.remove();
         resolve(value);
@@ -1299,15 +2120,25 @@ export class PerformanceReportExporter {
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          const safe = this.sanitizeFilePart(input.value || "Untitled") || "Untitled";
-          finish(safe);
+          this.setOutputFormats({ exportFormat: "latex" });
+          const data = collectDialogData();
+          if (!data) return;
+          finish({ ...data, action: "export" });
         }
       });
 
-      cancel.addEventListener("click", () => finish(null));
       save.addEventListener("click", () => {
-        const safe = this.sanitizeFilePart(input.value || "Untitled") || "Untitled";
-        finish(safe);
+        this.setOutputFormats({ exportFormat: "latex" });
+        const data = collectDialogData();
+        if (!data) return;
+        finish({ ...data, action: "export" });
+      });
+
+      copy.addEventListener("click", () => {
+        this.setOutputFormats({ exportFormat: "latex" });
+        const data = collectDialogData();
+        if (!data) return;
+        finish({ ...data, action: "copy" });
       });
 
       window.addEventListener("keydown", onEsc);
@@ -1316,8 +2147,13 @@ export class PerformanceReportExporter {
       modal.appendChild(title);
       modal.appendChild(input);
       modal.appendChild(help);
+      modal.appendChild(cpuLabel);
+      modal.appendChild(cpuInput);
+      modal.appendChild(gpuLabel);
+      modal.appendChild(gpuInput);
+      modal.appendChild(exportJsonRow);
       modal.appendChild(preview);
-      actions.appendChild(cancel);
+      actions.appendChild(copy);
       actions.appendChild(save);
       modal.appendChild(actions);
       overlay.appendChild(modal);
@@ -1349,9 +2185,14 @@ export class PerformanceReportExporter {
     URL.revokeObjectURL(url);
   }
 
+  private downloadTextAsBlob(content: string, filename: string, mimeType: string): Blob {
+    const blob = new Blob([content], { type: mimeType });
+    this.downloadBlob(blob, filename);
+    return blob;
+  }
+
   private downloadJson(payload: BenchmarkExportPayload, filename: string): void {
     const jsonText = JSON.stringify(payload, null, 2);
-    const blob = new Blob([jsonText], { type: "application/json" });
-    this.downloadBlob(blob, filename);
+    this.downloadTextAsBlob(jsonText, filename, "application/json");
   }
 }
