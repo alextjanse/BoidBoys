@@ -1,12 +1,14 @@
-// ============================================================
-// Boids Compute Shader — Spatial Hash Pipeline
-// ============================================================
+// #region Boids compute shader — spatial hash pipeline
+// Boids compute shader — spatial hash pipeline
 
+// #region Data structures
+// Boid storage layout: position.xyzw and velocity.xyzw
 struct Boid {
   position: vec4<f32>,
   velocity: vec4<f32>,
 };
 
+// Uniform scene parameters (20 floats = 80 bytes)
 struct SceneParams {
   separation_dist: f32,   // 0
   align_dist: f32,        // 4
@@ -24,16 +26,21 @@ struct SceneParams {
   grid_dim: vec4<f32>,    // 64  (.w = num_cells)
 };
 // Total: 80 bytes = 20 floats
+// #endregion
 
-// ---- Resources ----
+// #region GPU resources
+
+// GPU resources: storage buffers and uniforms
 @binding(0) @group(0) var<storage, read_write> boids: array<Boid>;
 @binding(1) @group(0) var<uniform> params: SceneParams;
 @binding(2) @group(0) var<storage, read_write> cell_heads: array<atomic<i32>>;
 @binding(3) @group(0) var<storage, read_write> boid_next: array<i32>;
 @binding(4) @group(0) var<storage, read_write> matrices: array<f32>;
 
-// ---- Helpers ----
+// #endregion
 
+// #region Helper functions
+// Helper functions for spatial hash and bounds handling
 fn cell_to_index(cell: vec3<i32>) -> i32 {
   let gd = vec3<i32>(vec3<f32>(params.grid_dim.xyz));
   return cell.x + cell.y * gd.x + cell.z * gd.x * gd.y;
@@ -45,6 +52,7 @@ fn pos_to_cell(pos: vec3<f32>) -> vec3<i32> {
   return clamp(cell, vec3<i32>(0), gd - vec3<i32>(1));
 }
 
+// Compute acceleration to keep boids away from world bounds
 fn compute_wall_accel(pos: vec3<f32>) -> vec3<f32> {
   let margin = params.margin;
   let tf = params.turn_factor;
@@ -59,11 +67,10 @@ fn compute_wall_accel(pos: vec3<f32>) -> vec3<f32> {
   return wa;
 }
 
-// ============================================================
-// Spatial Hash Boids
-// ============================================================
+// #endregion
 
-// Pass 1: Clear cell heads to -1 (empty)
+// #region Compute passes
+// Pass 1: clear cell heads to -1 (empty)
 @compute @workgroup_size(256)
 fn clear_cells(@builtin(global_invocation_id) gid: vec3<u32>) {
   let idx = gid.x;
@@ -73,7 +80,7 @@ fn clear_cells(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 }
 
-// Pass 2: Insert boids into spatial hash via linked list
+// Pass 2: insert boids into the spatial hash using a linked list
 @compute @workgroup_size(256)
 fn hash_insert(@builtin(global_invocation_id) gid: vec3<u32>) {
   let idx = gid.x;
@@ -88,7 +95,7 @@ fn hash_insert(@builtin(global_invocation_id) gid: vec3<u32>) {
   boid_next[idx] = old_head;
 }
 
-// Pass 3: Update boids using spatial-hash neighbor lookup
+// Pass 3: update boids using spatial-hash neighbor lookup
 @compute @workgroup_size(256)
 fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
   let idx = gid.x;
@@ -116,6 +123,7 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
   var cnt_a = 0u;
   var cnt_c = 0u;
 
+  // Search neighboring cells and accumulate neighbor contributions
   for (var dz = -1; dz <= 1; dz++) {
     for (var dy = -1; dy <= 1; dy++) {
       for (var dx = -1; dx <= 1; dx++) {
@@ -150,6 +158,7 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
 
+  // Combine separation, alignment and cohesion contributions into a single acceleration
   var accel = vec3<f32>(0.0);
   if (cnt_s > 0u) {
     let desired = normalize(sep_sum / f32(cnt_s)) * max_speed;
@@ -223,3 +232,4 @@ fn compute_matrices(@builtin(global_invocation_id) gid: vec3<u32>) {
   matrices[b + 14u] = pos.z;
   matrices[b + 15u] = 1.0;
 }
+// #endregion
