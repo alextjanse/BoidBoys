@@ -8,7 +8,7 @@ struct Boid {
   velocity: vec4<f32>,
 };
 
-// Uniform scene parameters (24 floats = 96 bytes)
+// Uniform scene parameters (28 floats = 112 bytes)
 struct SceneParams {
   separation_dist: f32,   // 0
   align_dist: f32,        // 4
@@ -25,12 +25,12 @@ struct SceneParams {
   world_max: vec4<f32>,   // 48  (align 16)
   grid_dim: vec4<f32>,    // 64  (.w = num_cells)
 
-  ray_origin: vec3<f32>,
-  _pad2: f32,             // ?? (padding for alignment)
-  ray_dir: vec3<f32>,
-  flee_radius: f32,
+  ray_origin: vec3<f32>,  // 80
+  _pad2: f32,             // 92 (padding for alignment)
+  ray_dir: vec3<f32>,     // 96
+  flee_radius: f32,       // 108
 };
-// Total: 69 bytes = 24 floats
+// Total: 112 bytes = 28 floats
 // #endregion
 
 // #region GPU resources

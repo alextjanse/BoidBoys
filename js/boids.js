@@ -18,7 +18,7 @@ let numCells = 1;
 
 // #endregion
 
-// #region Uniform buffer (24 floats = 96 bytes)
+// #region Uniform buffer (28 floats = 112 bytes)
 const paramsArray = new Float32Array(28);
 // Layout:
 // [0] separation_dist    [1] align_dist
