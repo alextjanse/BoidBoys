@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { PerformanceReportExporter } from './performance-report.ts';
 
 // #region Configuration
-let boidCount = 100000;
+let boidCount = 100;
 const WORKGROUP_SIZE = 256;
 let SIMULATION_SIZE = { x: 800, y: 800, z: 800 };
 let boidDensity = 0.000050;
