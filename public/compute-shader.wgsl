@@ -8,7 +8,7 @@ struct Boid {
   velocity: vec4<f32>,
 };
 
-// Uniform scene parameters (20 floats = 80 bytes)
+// Uniform scene parameters (24 floats = 96 bytes)
 struct SceneParams {
   separation_dist: f32,   // 0
   align_dist: f32,        // 4
@@ -24,8 +24,13 @@ struct SceneParams {
   _pad: f32,              // 44  (padding for vec4 alignment)
   world_max: vec4<f32>,   // 48  (align 16)
   grid_dim: vec4<f32>,    // 64  (.w = num_cells)
+
+  ray_origin: vec3<f32>,
+  _pad2: f32,             // ?? (padding for alignment)
+  ray_dir: vec3<f32>,
+  flee_radius: f32,
 };
-// Total: 80 bytes = 20 floats
+// Total: 69 bytes = 24 floats
 // #endregion
 
 // #region GPU resources
@@ -172,6 +177,29 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center = coh_sum / f32(cnt_c);
     let desired = normalize(center - my_pos) * max_speed;
     accel += clamp(desired - my_vel, vec3<f32>(-max_force), vec3<f32>(max_force)) * coh_w;
+  }
+
+  // Flee from mouse ray
+  let O = params.ray_origin;
+  let D = normalize(params.ray_dir);
+
+  let OP = my_pos - O;
+  let t = max(dot(OP, D), 0.0);
+
+  let closest = O + D * t;
+  let to_line = my_pos - closest;
+  let dist = length(to_line);
+
+  if (dist < params.flee_radius && dist > 0.001) {
+    let desired = normalize(to_line) * max_speed;
+
+    let steer = clamp(desired - my_vel,
+                      vec3<f32>(-max_force),
+                      vec3<f32>(max_force));
+
+    let strength = pow(1.0 - dist / params.flee_radius, 2.0);
+
+    accel += steer * 5.0 * strength;
   }
 
   let wall_accel = compute_wall_accel(my_pos);
