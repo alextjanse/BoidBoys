@@ -18,8 +18,8 @@ let numCells = 1;
 
 // #endregion
 
-// #region Uniform buffer (20 floats = 80 bytes)
-const paramsArray = new Float32Array(20);
+// #region Uniform buffer (28 floats = 112 bytes)
+const paramsArray = new Float32Array(28);
 // Layout:
 // [0] separation_dist    [1] align_dist
 // [2] cohesion_dist      [3] max_speed
@@ -29,6 +29,10 @@ const paramsArray = new Float32Array(20);
 // [10] cell_size         [11] _padding
 // [12-15] world_max (vec4)
 // [16-19] grid_dim (vec4, .w = numCells)
+// [20-22] mouse ray origin
+// [23] unused/padding 
+// [24-26] ray direction
+// [27] flee radius
 
 // #endregion
 
@@ -64,11 +68,20 @@ const reportExporter = new PerformanceReportExporter();
 
 // #endregion
 
+// Required for mouse interaction
+const mouse = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
+let mouseWorld = new THREE.Vector3();
+
+window.addEventListener('mousemove', (event) => {
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+});
+
 // #region Helper functions
 
 // Return spawn bounds for a given world size
-function getSpawnBounds(worldSize)
-{
+function getSpawnBounds(worldSize) {
   return {
     min: { x: 0, y: 0, z: 0 },
     max: { x: worldSize.x, y: worldSize.y, z: worldSize.z }
@@ -76,8 +89,7 @@ function getSpawnBounds(worldSize)
 }
 
 // Calculate simulation world size based on boid count and density
-function calculateSimulationSize(count, density)
-{
+function calculateSimulationSize(count, density) {
   const baseVolume = BASE_SIMULATION_SIZE.x * BASE_SIMULATION_SIZE.y * BASE_SIMULATION_SIZE.z;
   const requiredVolume = count / density;
   const scaleFactor = Math.cbrt(requiredVolume / baseVolume);
@@ -89,8 +101,7 @@ function calculateSimulationSize(count, density)
 }
 
 // Compute grid dimensions from current simulation size and cell size
-function calculateGridDimensions()
-{
+function calculateGridDimensions() {
   // Cell size = max of behavior distances (ensures correctness)
   cellSize = Math.min(paramsArray[0], paramsArray[1], paramsArray[2], 50);
   gridDim.x = Math.max(1, Math.ceil(SIMULATION_SIZE.x / cellSize));
@@ -100,8 +111,7 @@ function calculateGridDimensions()
 }
 
 // Update or recreate the visual bounding box for the simulation
-function updateVisualBounds()
-{
+function updateVisualBounds() {
   const oldBox = scene.getObjectByName('boid-bounds');
   if (oldBox) scene.remove(oldBox);
 
@@ -122,8 +132,7 @@ function updateVisualBounds()
 // #region Params management
 
 // Reset simulation parameters to sensible default values
-function resetParamsToDefaults()
-{
+function resetParamsToDefaults() {
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
 
   // Set behavior distances BEFORE calculating grid (grid depends on these)
@@ -152,8 +161,7 @@ function resetParamsToDefaults()
 }
 
 // Write the current params array to the GPU uniform buffer
-function syncParamsToGPU()
-{
+function syncParamsToGPU() {
   if (!gpuDevice || !uniformBuffer) return;
   // Always refresh grid & dynamic fields
   calculateGridDimensions();
@@ -176,8 +184,7 @@ resetParamsToDefaults();
 // #region GPU buffer creation
 
 // Initialize the storage buffer containing boid positions and velocities
-function initBoidBuffers(count)
-{
+function initBoidBuffers(count) {
   const boidData = new Float32Array(count * 8);
   const spawnBounds = getSpawnBounds(SIMULATION_SIZE);
   for (let i = 0; i < count; i++) {
@@ -201,8 +208,7 @@ function initBoidBuffers(count)
 }
 
 // Initialize buffers used by the spatial hash (cell heads and next indices)
-function initSpatialHashBuffers()
-{
+function initSpatialHashBuffers() {
   calculateGridDimensions();
 
   cellHeadBuffer = gpuDevice.createBuffer({
@@ -217,8 +223,7 @@ function initSpatialHashBuffers()
 }
 
 // Create buffers for instance matrices and a staging buffer for readback
-function initMatrixBuffers()
-{
+function initMatrixBuffers() {
   const matSize = boidCount * 16 * 4; // 16 floats per mat4, 4 bytes per float
 
   matrixBuffer = gpuDevice.createBuffer({
@@ -237,8 +242,7 @@ function initMatrixBuffers()
 // #region Bind groups
 
 // Create bind groups for compute pipelines
-function createBindGroups()
-{
+function createBindGroups() {
   bindGroup = gpuDevice.createBindGroup({
     layout: bindGroupLayout,
     entries: [
@@ -256,8 +260,7 @@ function createBindGroups()
 // #region WebGPU initialization
 
 // Initialize WebGPU device, shader modules, pipelines and buffers
-async function initWebGPU()
-{
+async function initWebGPU() {
   const adapter = await navigator.gpu?.requestAdapter();
   if (!adapter) {
     document.getElementById('info-app').innerText = "WebGPU not supported";
@@ -321,8 +324,7 @@ async function initWebGPU()
 // #region Three.js initialization
 
 // Initialize Three.js scene, camera, renderer and controls
-function initThree()
-{
+function initThree() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000005);
 
@@ -354,8 +356,7 @@ function initThree()
   createInstancedMesh();
   scene.add(new THREE.DirectionalLight(0xffffff, 1), new THREE.AmbientLight(0xffffff, 0.3));
 
-  window.addEventListener('resize', () =>
-  {
+  window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -363,8 +364,7 @@ function initThree()
 }
 
 // Create or recreate the instanced mesh used to render boids
-function createInstancedMesh()
-{
+function createInstancedMesh() {
   if (boidInstancedMesh) {
     scene.remove(boidInstancedMesh);
     boidInstancedMesh.geometry.dispose();
@@ -382,8 +382,7 @@ function createInstancedMesh()
 // #region Recreate and reset helpers
 
 // Recreate GPU buffers and instance mesh for a new boid count
-function recreateBoids(newCount)
-{
+function recreateBoids(newCount) {
   boidCount = newCount;
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
   resetParamsToDefaults();
@@ -402,8 +401,7 @@ function recreateBoids(newCount)
 }
 
 // Reinitialize boids for benchmark
-function resetBoidsForBenchmark()
-{
+function resetBoidsForBenchmark() {
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
 
   initBoidBuffers(boidCount);
@@ -422,8 +420,7 @@ function resetBoidsForBenchmark()
 // Uniform updates from the UI
 
 // Read UI inputs and sync them into the params array
-function updateUniforms()
-{
+function updateUniforms() {
   paramsArray[0] = parseFloat(document.getElementById('separation').value);
   paramsArray[1] = parseFloat(document.getElementById('align').value);
   paramsArray[2] = parseFloat(document.getElementById('cohesion').value);
@@ -444,8 +441,7 @@ function updateUniforms()
 const p = (v) => parseFloat(v.toPrecision(6));
 
 // Initialize UI controls and wire up event handlers
-function initUI()
-{
+function initUI() {
   // Populate inputs with defaults
   document.getElementById('boid-count').value = boidCount;
   document.getElementById('boid-density').value = boidDensity.toFixed(6);
@@ -465,8 +461,7 @@ function initUI()
   const boidDensityInput = document.getElementById('boid-density');
   let boidCountUpdateTimer = null;
 
-  const applyBoidCountFromInput = () =>
-  {
+  const applyBoidCountFromInput = () => {
     const n = parseInt(boidCountInput.value, 10);
     if (!isNaN(n) && n > 0 && n !== boidCount) {
       recreateBoids(n);
@@ -474,14 +469,12 @@ function initUI()
   };
 
   boidCountInput.addEventListener('change', applyBoidCountFromInput);
-  boidCountInput.addEventListener('input', () =>
-  {
+  boidCountInput.addEventListener('input', () => {
     if (boidCountUpdateTimer) clearTimeout(boidCountUpdateTimer);
     boidCountUpdateTimer = setTimeout(applyBoidCountFromInput, 250);
   });
 
-  boidDensityInput.addEventListener('input', e =>
-  {
+  boidDensityInput.addEventListener('input', e => {
     const d = parseFloat(e.target.value);
     if (!isNaN(d) && d > 0) {
       boidDensity = d;
@@ -498,10 +491,8 @@ function initUI()
   // Parameter inputs
   const inputs = ['separation', 'align', 'cohesion', 'max_speed', 'max_force',
     'sep_weight', 'align_weight', 'coh_weight', 'margin', 'turn_factor'];
-  inputs.forEach(id =>
-  {
-    document.getElementById(id).addEventListener('input', () =>
-    {
+  inputs.forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
       const oldNumCells = numCells;
       updateUniforms();
       // If grid dimensions changed, rebuild spatial hash buffers
@@ -513,23 +504,20 @@ function initUI()
   });
 
   // Panel collapse
-  document.getElementById('toggle-panel').addEventListener('click', () =>
-  {
+  document.getElementById('toggle-panel').addEventListener('click', () => {
     const body = document.getElementById('settings-body');
     const bs = bootstrap.Collapse.getOrCreateInstance(body);
     bs.toggle();
   });
 
   // Start/Pause control
-  document.getElementById('start-pause-btn').addEventListener('click', () =>
-  {
+  document.getElementById('start-pause-btn').addEventListener('click', () => {
     isSimulationRunning = !isSimulationRunning;
     updateStartPauseButton();
   });
 
   // Restart control
-  document.getElementById('restart-btn').addEventListener('click', () =>
-  {
+  document.getElementById('restart-btn').addEventListener('click', () => {
     const inputCount = parseInt(boidCountInput.value, 10);
     const inputDensity = parseFloat(boidDensityInput.value);
     if (!isNaN(inputDensity) && inputDensity > 0) boidDensity = inputDensity;
@@ -546,20 +534,17 @@ function initUI()
   document.getElementById('reset-btn').addEventListener('click', resetSimulation);
 
   // Benchmark control
-  document.getElementById('benchmark-btn').addEventListener('click', () =>
-  {
+  document.getElementById('benchmark-btn').addEventListener('click', () => {
     benchmarker.start();
   });
 
   // Import benchmark LaTeX and open copy/comparison preview
-  document.getElementById('import-report-btn').addEventListener('click', () =>
-  {
+  document.getElementById('import-report-btn').addEventListener('click', () => {
     const input = document.getElementById('benchmark-json-input');
     if (input) input.click();
   });
 
-  document.getElementById('benchmark-json-input').addEventListener('change', async (event) =>
-  {
+  document.getElementById('benchmark-json-input').addEventListener('change', async (event) => {
     const files = event.target.files ? Array.from(event.target.files) : [];
     if (files.length === 0) return;
 
@@ -576,8 +561,7 @@ function initUI()
   updateStartPauseButton();
 
   // Initialize Bootstrap tooltips on all settings inputs
-  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el =>
-  {
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
     bootstrap.Tooltip.getOrCreateInstance(el, { trigger: 'hover' });
   });
 }
@@ -595,10 +579,8 @@ const BenchmarkState = {
 };
 
 // Manages the benchmarking flow, including warm-up, recording, and result export
-class BoidBenchmarker
-{
-  constructor(onResetCallback, onCompleteCallback = null)
-  {
+class BoidBenchmarker {
+  constructor(onResetCallback, onCompleteCallback = null) {
     this.state = BenchmarkState.IDLE;
     this.frameTimes = [];
     this.lastFrameTime = 0;
@@ -616,11 +598,9 @@ class BoidBenchmarker
   }
 
   // Register a hotkey (Esc) to allow the user to cancel the benchmark early
-  registerCancelHotkey()
-  {
+  registerCancelHotkey() {
     if (typeof window === 'undefined' || this.onEscHandler) return;
-    this.onEscHandler = (event) =>
-    {
+    this.onEscHandler = (event) => {
       if (event.key !== 'Escape') return;
       if (this.state !== BenchmarkState.WARMING_UP && this.state !== BenchmarkState.RECORDING) return;
       event.preventDefault();
@@ -630,16 +610,14 @@ class BoidBenchmarker
   }
 
   // Unregister the hotkey when benchmark is completed or canceled
-  unregisterCancelHotkey()
-  {
+  unregisterCancelHotkey() {
     if (typeof window === 'undefined' || !this.onEscHandler) return;
     window.removeEventListener('keydown', this.onEscHandler);
     this.onEscHandler = null;
   }
 
   // Clean up timers, reset state, and call completion callback if provided
-  finalizeRun()
-  {
+  finalizeRun() {
     if (this.warmUpTimeout) {
       clearTimeout(this.warmUpTimeout);
       this.warmUpTimeout = null;
@@ -657,16 +635,14 @@ class BoidBenchmarker
   }
 
   // Cancel the benchmark early with an optional reason message
-  cancelBenchmark(reason = 'Benchmark canceled.')
-  {
+  cancelBenchmark(reason = 'Benchmark canceled.') {
     if (this.state !== BenchmarkState.WARMING_UP && this.state !== BenchmarkState.RECORDING) return;
     this.finalizeRun();
     console.log(reason);
   }
 
   // Start the benchmark flow: warm-up phase followed by recording phase, with appropriate state management and callbacks
-  start()
-  {
+  start() {
     if (this.state !== BenchmarkState.IDLE && this.state !== BenchmarkState.COMPLETED) {
       console.warn("Benchmark already in progress.");
       return;
@@ -684,15 +660,13 @@ class BoidBenchmarker
     this.onResetCallback();
     console.log("Benchmark: WARMING UP (10s)...");
 
-    this.warmUpTimeout = setTimeout(() =>
-    {
+    this.warmUpTimeout = setTimeout(() => {
       this.state = BenchmarkState.RECORDING;
       this.lastFrameTime = performance.now();
       this.recordEndsAt = performance.now() + this.RECORD_MS;
       console.log("Benchmark: RECORDING (10s)...");
 
-      this.recordTimeout = setTimeout(() =>
-      {
+      this.recordTimeout = setTimeout(() => {
         this.completeBenchmark();
       }, this.RECORD_MS);
 
@@ -700,8 +674,7 @@ class BoidBenchmarker
   }
 
   // Record a frame time sample, using GPU timestamp if provided, and only if currently in the recording phase
-  recordFrame(now = null, gpuTimestampMs = null)
-  {
+  recordFrame(now = null, gpuTimestampMs = null) {
     const fallbackNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
       ? performance.now()
       : Date.now();
@@ -722,24 +695,21 @@ class BoidBenchmarker
   }
 
   // Record a simulation time sample, only if currently in the recording phase
-  recordSimulationSample(simulationMs)
-  {
+  recordSimulationSample(simulationMs) {
     if (this.state === BenchmarkState.RECORDING && Number.isFinite(simulationMs)) {
       this.simFrameSamples.push(simulationMs);
     }
   }
 
   // Record a render time sample, only if currently in the recording phase
-  recordRenderSample(renderMs)
-  {
+  recordRenderSample(renderMs) {
     if (this.state === BenchmarkState.RECORDING && Number.isFinite(renderMs)) {
       this.renderFrameSamples.push(renderMs);
     }
   }
 
   // Return the current benchmark status, including phase, time remaining, and visibility for the HUD display
-  getStatus(now = performance.now())
-  {
+  getStatus(now = performance.now()) {
     if (this.state === BenchmarkState.WARMING_UP) {
       return {
         visible: true,
@@ -776,8 +746,7 @@ class BoidBenchmarker
   }
 
   // Complete the benchmark by exporting the results, including frame times, settings, hardware info, and average simulation/render times, then finalize the run and call completion callback
-  async completeBenchmark()
-  {
+  async completeBenchmark() {
     this.state = BenchmarkState.COMPLETED;
     this.unregisterCancelHotkey();
     console.log(`Benchmark COMPLETED. Captured ${this.frameTimes.length} frames.`);
@@ -822,14 +791,12 @@ class BoidBenchmarker
 }
 
 const benchmarker = new BoidBenchmarker(
-  () =>
-  {
+  () => {
     collapseSettingsPanelForBenchmark();
     resetBoidsForBenchmark();
     lockCameraForBenchmark();
   },
-  () =>
-  {
+  () => {
     unlockCameraAfterBenchmark();
     restoreSettingsPanelAfterBenchmark();
   }
@@ -837,8 +804,7 @@ const benchmarker = new BoidBenchmarker(
 // #endregion
 
 // Animation frame: run simulation and render
-function frame()
-{
+function frame() {
   requestAnimationFrame(frame);
 
   const now = performance.now();
@@ -879,6 +845,22 @@ function frame()
 
   if (useGPU && !isMapping && isSimulationRunning) {
     const simStart = performance.now();
+
+    raycaster.setFromCamera(mouse, camera);
+
+    const origin = raycaster.ray.origin;
+    const dir = raycaster.ray.direction;
+
+    // store
+    paramsArray[20] = origin.x;
+    paramsArray[21] = origin.y;
+    paramsArray[22] = origin.z;
+
+    paramsArray[24] = dir.x;
+    paramsArray[25] = dir.y;
+    paramsArray[26] = dir.z;
+
+    paramsArray[27] = SIMULATION_SIZE.x * 0.12;
 
     syncParamsToGPU();
 
@@ -925,8 +907,7 @@ function frame()
 
     // Async readback of instance matrices
     isMapping = true;
-    matrixStagingBuffer.mapAsync(GPUMapMode.READ).then(() =>
-    {
+    matrixStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
       const renderStart = performance.now();
 
       const matData = new Float32Array(matrixStagingBuffer.getMappedRange());
@@ -950,8 +931,7 @@ function frame()
 // #region UI helper functions
 
 // Update the start/pause button appearance based on simulation state
-function updateStartPauseButton()
-{
+function updateStartPauseButton() {
   const btn = document.getElementById('start-pause-btn');
   const icon = document.getElementById('start-icon');
   if (isSimulationRunning) {
@@ -966,8 +946,7 @@ function updateStartPauseButton()
 }
 
 // Collapse settings panel at benchmark start while remembering previous state
-function collapseSettingsPanelForBenchmark()
-{
+function collapseSettingsPanelForBenchmark() {
   const body = document.getElementById('settings-body');
   if (!body) return;
 
@@ -977,8 +956,7 @@ function collapseSettingsPanelForBenchmark()
 }
 
 // Restore settings panel visibility to its pre-benchmark state
-function restoreSettingsPanelAfterBenchmark()
-{
+function restoreSettingsPanelAfterBenchmark() {
   if (wasSettingsPanelOpenBeforeBenchmark === null) return;
 
   const body = document.getElementById('settings-body');
@@ -998,8 +976,7 @@ function restoreSettingsPanelAfterBenchmark()
 }
 
 // Lock camera to a fixed default position for a reproducible benchmark view
-function lockCameraForBenchmark()
-{
+function lockCameraForBenchmark() {
   if (!camera || !controls) return;
   const cx = SIMULATION_SIZE.x / 2;
   const cy = SIMULATION_SIZE.y / 2;
@@ -1012,14 +989,12 @@ function lockCameraForBenchmark()
 }
 
 // Re-enable camera controls after benchmark completes
-function unlockCameraAfterBenchmark()
-{
+function unlockCameraAfterBenchmark() {
   if (!controls) return;
   controls.enabled = true;
 }
 
-function updateBenchmarkHUD(now)
-{
+function updateBenchmarkHUD(now) {
   const hud = document.getElementById('benchmark-hud');
   if (!hud) return;
 
@@ -1042,8 +1017,7 @@ function updateBenchmarkHUD(now)
 }
 
 // Reset simulation to default parameters and recreate boids
-function resetSimulation()
-{
+function resetSimulation() {
   boidCount = 100000;
   boidDensity = 0.00005;
   SIMULATION_SIZE = calculateSimulationSize(boidCount, boidDensity);
@@ -1071,8 +1045,7 @@ function resetSimulation()
 
 // #region Bootstrap
 
-initWebGPU().then(() =>
-{
+initWebGPU().then(() => {
   initThree();
   frame();
 });
