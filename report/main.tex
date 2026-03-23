@@ -11,8 +11,12 @@
 % Images
 \usepackage{graphicx}
 
+% Allow line-breaking URLs/paths in text
+\usepackage{url}
+\def\UrlBreaks{\do\/\do-\do\_\do\#\do\0\do\1\do\2\do\3\do\4\do\5\do\6\do\7\do\8\do\9}
+
 % Formatting
-\usepackage[left=1in, right=1in, top=1.2in, down=1.2in]{geometry}
+\usepackage[left=1in, right=1in, top=1.2in, bottom=1.2in]{geometry}
 \usepackage{dirtytalk} % Proper quotation marks
 
 % Colors for highlighting and coloring tables
@@ -37,9 +41,9 @@
 
 \title{Boid Boys}
 
-\author{}
+\author{ Kian Hamidi, Alex Janse, Jaël Kwakkel, Antonio Sato }
 
-\date{}
+\date{ \today }
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -77,9 +81,24 @@
 
 
 
-\subsection{Spacial Hashing}
-\label{subsec:spacial_hash}
+\subsection{Spatial Hashing}
+\label{subsec:spatial_hash}
 
+Spatial hashing is used to accelerate nearest-neighbour queries so each boid only inspects nearby flockmates instead of the entire set. A regular 3D grid partitions world space; each boid is mapped to a cell and cells store linked lists of boid indices. This reduces the naive $\mathcal{O}(N^2)$ neighbour search to a local search over the boid population inside a small neighbourhood (the surrounding $3 \times 3 \times 3$ cells).
+
+Implementation details:
+\begin{itemize}
+    \item \textbf{Grid parameters:} The JavaScript side computes cell size and grid dimensions in \texttt{calculateGridDimensions()}. The chosen \texttt{cell\_size} is based on behaviour distances so neighbours fall into adjacent cells.
+    \item \textbf{Buffers:} Two GPU storage buffers implement the structure: \texttt{cell\_heads} (an array of atomic integers containing the head index for each cell) and \texttt{boid\_next} (an array of ints forming the linked list next pointers for each boid). Buffers are created and sized in \texttt{initSpatialHashBuffers()}.
+    \item \textbf{Coordinate helpers:} The compute shader provides \path{pos_to_cell()} and \path{cell_to_index()} helpers to quantize world positions to integer cell coordinates and to flatten 3D coordinates to a 1D cell index.
+    \item \textbf{Build phase (Pass 1 \& 2):} The GPU executes a two-step build: (a) clear all \texttt{cell\_heads} to \texttt{-1} using \texttt{atomicStore}, and (b) run a parallel insert where each boid computes its cell index and calls \path{atomicExchange(&cell_heads[ci], i32(idx))}. The returned old head is written into \path{boid_next[idx]}, producing a thread-safe linked list per cell.
+    \item \textbf{Query/update phase (Pass 3):} For each boid the shader computes its home cell, then loops the $3 \times 3 \times 3$ neighbourhood. For each neighbour cell it reads the head with \path{atomicLoad(\&cell_heads[ci])} and traverses the linked list via \path{boid_next} until \texttt{-1} is reached (the traversal is bounded to avoid pathological loops). During traversal the shader accumulates separation, alignment and cohesion contributions from neighbours.
+    \item \textbf{All-GPU pipeline:} The implementation keeps the entire update pipeline on the GPU: building the hash, computing forces, and producing per-boid 4x4 transformation matrices for instanced rendering. This avoids expensive CPU\textless-\textgreater GPU transfers and enables scaling to many thousands of boids.
+\end{itemize}
+
+Key WGSL bindings and shader details are declared near the top of the compute shader (\path{public/compute-shader.wgsl}): the uniform \path{params} holds \path{cell_size} and \path{grid_dim}, and storage bindings expose \path{cell_heads}, \path{boid_next} and the \path{boids} input array. The three compute passes (clear cells, hash insert, update) are dispatched from JavaScript in sequence to maintain a deterministic frame update.
+\bigbreak
+This design follows the classic parallel spatial-hash linked-list pattern: atomic head updates to build lists concurrently, followed by per-boid local neighbourhood traversals for behaviour computation. It provides a practical balance between memory use, parallelism and neighbor-search accuracy for real-time flocking.
 
 
 \subsection{KD-Tree}
@@ -91,26 +110,51 @@
 \label{subsec:sweepline}
 
 
+\subsection{Stigmergy}
+\label{subsec:stigmergy}
+
+\subsection*{The idea}
+The idea behind stigmergy is to use the environment as a medium for indirect communication between agents. In the context of our boid simulation, this would involve boids leaving behind some form of "pheromone" or marker in the environment that other boids can sense and react to. This could potentially allow for more complex and emergent flocking behaviors without requiring direct communication between boids.
+\bigbreak
+The way Stigmergy is implemented in Mark Tensen's research \cite{order_of_magnitude_boids} is though a texture based approach. Which allows for boids to keep a global interactivity intact thoughout the simulation. Because using Spatial Hashing like we do \ref{subsec:spatial_hash} only allows for local interactivity, meaning that boids can only interact with other boids in their local neighbourhood. This is because the Spatial Hashing approach relies on a grid-based partitioning of space, which limits the interactions to nearby cells.
+
+\subsubsection*{What has been done}
+To scale up our flocking simulation, we integrated concepts from Mark Tensen's research \cite{order_of_magnitude_boids} directly into our WebGPU pipeline. Rather than calculating boid behaviors in nearby cells, we. 
+
+The core of this optimization is the implementation of a parallel Spatial Hash grid. The process is broken down into the following steps on the GPU:
+\begin{itemize}
+    \item \textbf{Grid Initialization:} The compute shader clears a buffer of cell heads, effectively resetting the spatial grid for the current frame.
+    \item \textbf{Spatial Hashing (Linked Lists):} Each boid calculates which 3D grid cell it belongs to based on its current position. Using atomic operations (\texttt{atomicExchange}), the boids concurrently insert themselves into the grid, building a linked list of boids for each cell in a completely parallelized manner.
+    \item \textbf{Behavior Update:} During the update pass, boids no longer check every other boid in the simulation. Instead, they determine their current cell and only iterate through the linked lists of the surrounding $3 \times 3 \times 3$ neighboring cells to calculate separation, alignment, and cohesion forces.
+    \item \textbf{Matrix Computation:} Finally, the compute shader calculates the $4 \times 4$ transformation matrices for each boid, which are passed directly to Three.js for instanced rendering.
+\end{itemize}
+
+\subsubsection*{Why we chose to apply this}
+A naive boid simulation requires every boid to check its distance against every other boid to determine local flockmates. This results in an $\mathcal{O}(N^2)$ time complexity, which severely bottlenecks the simulation on the CPU, typically limiting the flock to just a few thousand individuals before frame rates plummet. 
+\medbreak
+By implementing Tensen's GPU-driven spatial hashing \cite{order_of_magnitude_boids}, we localized the nearest-neighbor search, vastly reducing the number of distance calculations required per frame. Furthermore, keeping the entire pipeline strictly on the GPU. Which eliminates the massive performance overhead of transferring hundreds of thousands of vector states back and forth between CPU and GPU memory. 
+\medbreak
+This architectural choice is what allows our program to bypass traditional computational limits and simulate tens, or even hundreds, of thousands of boids at smooth interactive frame rates, achieving a true order of magnitude performance increase.
+
+\subsubsection*{Why is this not present in our final program?}
+The reason as to why we haven't implemented this in our final program is because of the issues we had with the implementation. Implementing this caused the boids to be atteracted to a slice of the space where the grid cells were located, which caused the boids to cluster together in that area and not be able to move freely in the space. We tried to fix this issue by adjusting the parameters of the spatial hash, but we couldn't find a solution that worked well enough. This made it impossible for us to deteremin if the implementation actually helped resolve the issue of global interactivity, which is the main reason why we haven't included it in our final program.
 
 \section{Problems and Limitations}
 \label{sec:problems_and_limitations}
 % Main problems we faced during the project, limitations of our program/solutions, workarounds we came up with
 
-
-
 \section{Results}
 \label{sec:results}
 % Not sure if needed, but somewhere we can show some results of our program, benchmarking, or how far we can push it
 
-
-\section{AI prompts}
+\section{AI prompts} 
 % Necessary?
 
 
 \section*{Contributions and Self-reflections}
 % Website told us to do it so we each gotta do one
 
-
+\break
 \nocite{*}
 \printbibliography
 
