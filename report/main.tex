@@ -30,6 +30,18 @@
 % Custom labeled lists
 \usepackage{enumerate}
 
+% Clickable references
+\usepackage{hyperref}
+% Source - https://tex.stackexchange.com/a/51349
+% Posted by Canageek, modified by community. See post 'Timeline' for change history
+% Retrieved 2026-03-23, License - CC BY-SA 4.0
+\hypersetup{
+  colorlinks   = true, %Colours links instead of ugly boxes
+  urlcolor     = blue, %Colour for external hyperlinks
+  linkcolor    = blue, %Colour of internal links
+  citecolor   = red %Colour of citations
+}
+
 % Comments
 \usepackage{comment}
 
@@ -64,11 +76,34 @@
 
 
 
-\section{Simulating Boid behaviour}
-\label{sec:boids}
+\section{Simulating Boid behaviour}\label{sec:boids}
 % Basic description of our implementation of boid behaviour
+The behaviour of the boids is based on the boids paper by Craig Reynolds~\cite{reynolds1987flocks}. This section describes the algorithm in general, the modifications we made, and the choice of parameters.
 
+\subsection{The model}\label{subsec:model}
 
+The main model consists of a combination of the following 3 steering behaviours: seperation, alignment and cohesion. Seperation aims to make sure boids do not collide or crowd too much. A force is applied opposite to neighbouring boids, where closer boids are considered heavier. Alignment is used to steer boids in the same general direction, aligning with their neighbours. This is calculated by taking the average direction of neighbouring agents. The cohesion steering behaviour is used to remain a group. The boids stick together to form a cohesive flock, which can be identified as a group. Cohesion is calculated by steering towards the average position of neighbouring boids. Combining these 3 steering behaviours with different influence strength results in a realistic flock of birds. Finding the neighbouring birds is based on a radius around the bird, as well as a maximum angle. This is used to emulate the vision of a bird, any boids outside the range are ignored. 
+
+Our implementation consists of a CPU and a GPU part. The cpu part handles the interaction with the user, which is the definition of parameters, starting and stopping the simulation, and the mouse cursor interacting with the boids. More information of mouse interaction in~\ref{subsec:modifications}. After the user input has been gathered, the current state of the simulation is send to the GPU\@. Table~\ref{tab:bindings} displays the data that is send to the GPU\@. Note that this is required information for the basic simulation, and does not include the data needed for any acceleration structure. Chapter~\ref{sec:accel} will go into more detail of the chosen structure to find neighbourhoods in a fast way.
+
+\begin{table}
+    \centering
+    \begin{tabular}{lll}
+        \hline
+        Boids & An array holding boid locations and velocities \\ \hline
+        Parameters & The parameters controlling the simulation \\ \hline
+        Matrices & The output matrices used by the renderer \\ \hline
+    \end{tabular}
+    \caption{GPU resources}\label{tab:bindings}
+\end{table} 
+
+After the simulation has been performed, the altered data is sent back to the cpu and rendered. TODO: describe rendering slightly more in-depth
+
+\subsection{Our modifications}\label{subsec:modifications}
+TODO: Mouse interaction
+
+\subsection{Parameter choice}\label{subsec:parameters}
+TODO: Explain parameters and default values
 
 \section{Acceleration Structures}
 \label{sec:accel}
