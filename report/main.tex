@@ -67,17 +67,22 @@
 
 
 
-\section{Project Description}
-\label{sec:proj_desc}
+\section{Project Description}\label{sec:proj_desc}
 % Short description of our project and its features
-\todo{Short description of our project and its features}
+The behaviour of flocks of birds, schools of fish and other coordinated animal group motion can be modelled using a simple set of steering behviours. This project aims to implement and extend the behaviour of a flock of birds, in specific a murder of crows, to run for 100,000 birds at a real-time simulation rate of 60+ Hz. This consists of a simulation and a visualisation, both of which are executed locally in a web application compiled to Web Assembly. This report describes what software and frameworks have been used for the creation of the simulation, how the simulation was implemented and what choices have been made to create a real-time simulation for a large amount of birds. Finally the problems we encountered while implementing this simulation are described, before giving the results we have achieved.
+\todo{Update this section if we decide to add or remove chapters.}
 
-
-\section{Software used}
-\label{sec:software}
+\section{Software used}\label{sec:software}
 % Provide details of software used (Threejs and WebGPU)
 \todo{Provide details of software used (Threejs and WebGPU)}
+This chapter describes the choice of programming language, framework and utulization of the GPU for both the simulation and visualization of the model.
 
+\subsection{Simulation}\label{subsec:simulation}
+% WebGPU, js, etc
+The simulation is performed using a combination of Javascript on the CPU side, and wgsl (WebGPU Shading Language) on the GPU side. These languages have mainly been chosen, because the simulation has to run inside a browser.
+
+\subsection{Visualisation}\label{subsec:visualisation}
+% Threejs, instancedmesh, animation?, etc
 
 \section{Simulating Boid behaviour}\label{sec:boids}
 % Basic description of our implementation of boid behaviour
@@ -85,7 +90,8 @@ The behaviour of the boids is based on the boids paper by Craig Reynolds~\cite{r
 
 \subsection{The model}\label{subsec:model}
 
-The main model consists of a combination of the following 3 steering behaviours: seperation, alignment and cohesion. Seperation aims to make sure boids do not collide or crowd too much. A force is applied opposite to neighbouring boids, where closer boids are considered heavier. Alignment is used to steer boids in the same general direction, aligning with their neighbours. This is calculated by taking the average direction of neighbouring agents. The cohesion steering behaviour is used to remain a group. The boids stick together to form a cohesive flock, which can be identified as a group. Cohesion is calculated by steering towards the average position of neighbouring boids. Combining these 3 steering behaviours with different influence strength results in a realistic flock of birds. Finding the neighbouring birds is based on a radius around the bird, as well as a maximum angle \todo{Have we implemented the vision angle, or just the radius?}. This is used to emulate the vision of a bird, any boids outside the range are ignored. 
+The main model consists of a combination of the following 3 steering behaviours: seperation, alignment and cohesion. Seperation aims to make sure boids do not collide or crowd too much. A force is applied opposite to neighbouring boids, where closer boids are considered heavier. Alignment is used to steer boids in the same general direction, aligning with their neighbours. This is calculated by taking the average direction of neighbouring agents. The cohesion steering behaviour is used to remain a group. The boids stick together to form a cohesive flock, which can be identified as a group. Cohesion is calculated by steering towards the average position of neighbouring boids. Combining these 3 steering behaviours with different influence strength results in a realistic flock of birds. Finding the neighbouring birds is based on a radius around the bird, as well as a maximum angle.
+\todo{Have we implemented the vision angle, or just the radius?} This is used to emulate the vision of a bird, any boids outside the range are ignored. 
 
 Our implementation consists of a CPU and a GPU part. The cpu part handles the interaction with the user, which is the definition of parameters, starting and stopping the simulation, and the mouse cursor interacting with the boids. More information of mouse interaction in~\ref{subsec:modifications}. After the user input has been gathered, the current state of the simulation is send to the GPU\@. Table~\ref{tab:bindings} displays the data that is send to the GPU\@. Note that this is required information for the basic simulation, and does not include the data needed for any acceleration structure. Chapter~\ref{sec:accel} will go into more detail of the chosen structure to find neighbourhoods in a fast way.
 
@@ -136,15 +142,14 @@ This section describes the exposed parameters, their function and their default 
 \todo{Fill in the unknown values of table~\ref{tab:parameters} (?)}
 \todo{Mouse ray direction and origin are not actually parameters, should they be changed in code, or treated as parameters?}
 
-\section{Acceleration Structures}
-\label{sec:accel}
+\section{Acceleration Structures}\label{sec:accel}
 % Describe acceleration structures and ideas we had to optimize our program
 % Include ideas we didn't use
 % Reference papers or other implementations in .bib file and use \cite to include it in the text
 
 % Please feel free to set a different name to this section, I'm just trying to be somewhat general with the names and we can adapt them later to how the report turns out
 % Add more subsections as you please!
-
+To try to get 100,000 boids simulated at a steady 60fps, we have explored a variety of spatial data acceleration structures. The main bottleneck in the simulation was finding neighbouring boids. To improve the speed of this, it is important that the distance is not performed on every boid in the simulation. This would result in a $\mathcal{O}(N^2)$ time complexity. While this is managable with a low amount of boids, it reduces the fps massively when scaling to a larger simulation size. This chapter will describe the different data strucures we have tried, with their strengths and weaknesses.
 
 
 \subsection{Spatial Hashing}
