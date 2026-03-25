@@ -18,6 +18,8 @@
 % Formatting
 \usepackage[left=1in, right=1in, top=1.2in, bottom=1.2in]{geometry}
 \usepackage{dirtytalk} % Proper quotation marks
+\usepackage{float} % Make it possible for tables (and images) to be placed in an explicit location (using [H])
+
 
 % Colors for highlighting and coloring tables
 \usepackage{color, soul}
@@ -44,6 +46,7 @@
 
 % Comments
 \usepackage{comment}
+\usepackage{todonotes}
 
 % References
 \usepackage{biblatex}
@@ -67,13 +70,13 @@
 \section{Project Description}
 \label{sec:proj_desc}
 % Short description of our project and its features
-
+\todo{Short description of our project and its features}
 
 
 \section{Software used}
 \label{sec:software}
 % Provide details of software used (Threejs and WebGPU)
-
+\todo{Provide details of software used (Threejs and WebGPU)}
 
 
 \section{Simulating Boid behaviour}\label{sec:boids}
@@ -82,11 +85,11 @@ The behaviour of the boids is based on the boids paper by Craig Reynolds~\cite{r
 
 \subsection{The model}\label{subsec:model}
 
-The main model consists of a combination of the following 3 steering behaviours: seperation, alignment and cohesion. Seperation aims to make sure boids do not collide or crowd too much. A force is applied opposite to neighbouring boids, where closer boids are considered heavier. Alignment is used to steer boids in the same general direction, aligning with their neighbours. This is calculated by taking the average direction of neighbouring agents. The cohesion steering behaviour is used to remain a group. The boids stick together to form a cohesive flock, which can be identified as a group. Cohesion is calculated by steering towards the average position of neighbouring boids. Combining these 3 steering behaviours with different influence strength results in a realistic flock of birds. Finding the neighbouring birds is based on a radius around the bird, as well as a maximum angle. This is used to emulate the vision of a bird, any boids outside the range are ignored. 
+The main model consists of a combination of the following 3 steering behaviours: seperation, alignment and cohesion. Seperation aims to make sure boids do not collide or crowd too much. A force is applied opposite to neighbouring boids, where closer boids are considered heavier. Alignment is used to steer boids in the same general direction, aligning with their neighbours. This is calculated by taking the average direction of neighbouring agents. The cohesion steering behaviour is used to remain a group. The boids stick together to form a cohesive flock, which can be identified as a group. Cohesion is calculated by steering towards the average position of neighbouring boids. Combining these 3 steering behaviours with different influence strength results in a realistic flock of birds. Finding the neighbouring birds is based on a radius around the bird, as well as a maximum angle \todo{Have we implemented the vision angle, or just the radius?}. This is used to emulate the vision of a bird, any boids outside the range are ignored. 
 
 Our implementation consists of a CPU and a GPU part. The cpu part handles the interaction with the user, which is the definition of parameters, starting and stopping the simulation, and the mouse cursor interacting with the boids. More information of mouse interaction in~\ref{subsec:modifications}. After the user input has been gathered, the current state of the simulation is send to the GPU\@. Table~\ref{tab:bindings} displays the data that is send to the GPU\@. Note that this is required information for the basic simulation, and does not include the data needed for any acceleration structure. Chapter~\ref{sec:accel} will go into more detail of the chosen structure to find neighbourhoods in a fast way.
 
-\begin{table}
+\begin{table}[H]
     \centering
     \begin{tabular}{lll}
         \hline
@@ -97,13 +100,41 @@ Our implementation consists of a CPU and a GPU part. The cpu part handles the in
     \caption{GPU resources}\label{tab:bindings}
 \end{table} 
 
-After the simulation has been performed, the altered data is sent back to the cpu and rendered. TODO: describe rendering slightly more in-depth
+After the simulation has been performed, the altered data is sent back to the cpu and rendered. The rendering is done as an instancedmesh, which means that all the boids are combined into a single mesh, and drawn as a single draw call. This is possible, because all boids use the same mesh as a base, and only a rotation and translation is applied. The usage of an instancedmesh results in faster rendering times.
 
 \subsection{Our modifications}\label{subsec:modifications}
-TODO: Mouse interaction
+While the simulation started of as an exact implementation of the boids paper, we have made some modifications. One of the modifications is the interaction with the mouse cursor. We have created a system where the boids flee from a line emitted from the cursor. This system works by casting a ray from the mouse cursor in the direction of the camera view. The ray origin and direction are sent to the GPU. On the GPU side, the boid finds the closest point on the line, and steers away from that point.
+
+\todo{Have we made other modification to the original method?}
 
 \subsection{Parameter choice}\label{subsec:parameters}
-TODO: Explain parameters and default values
+This section describes the exposed parameters, their function and their default value. Altering these parameters can change the behaviour, performance or scale of the simulation. All parameters are listed in table~\ref{tab:parameters}.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lp{0.5\linewidth}l}
+        \textbf{Parameter} & \textbf{Function} & \textbf{Default value} \\ \hline
+        separation distance & The neighbourhood radius of the seperation behaviour &? \\ \hline
+        alignment distance & The neighbourhood radius of the alignment behaviour &? \\ \hline
+        cohesion distance & The neighbourhood radius of the cohesion behaviour &? \\ \hline
+        maximum speed & The maximum units a boid can move in a single timestep &? \\ \hline
+        maximum force & The maximum amount of change to the velocity in a single timestep &? \\ \hline
+        separation weight & The relative influence of seperation when combining steering behaviours &? \\ \hline
+        alignment weight & The relative influence of alignment when combining steering behaviours &? \\ \hline
+        cohesion weight & The relative influence of cohesion when combining steering behaviours &? \\ \hline
+        margin & The minimum distance to a wall to start steering away from it &? \\ \hline
+        turnfactor & The maximum amount of change in velocity to avoid colliding with walls &? \\ \hline
+        cellsize & The size of a cell in the spatial hashing datastructure &? \\ \hline
+        world max & The bounding box size of the simulation &? \\ \hline
+        grid dim & The amount of cells in the simulation in the x, y and z direction. The w is used as a total count of cells. &? \\ \hline
+        ray origin & The origin of the mouse ray. This is the location of the mouse on the near plane of the camera &? \\ \hline
+        ray direction & The direction of the mouse ray. This is the direction of the camera view &? \\ \hline
+        flee radius & The radius of influence of the mouse ray &? \\ \hline
+    \end{tabular}
+    \caption{Parameters}\label{tab:parameters}
+\end{table}
+\todo{Fill in the unknown values of table~\ref{tab:parameters} (?)}
+\todo{Mouse ray direction and origin are not actually parameters, should they be changed in code, or treated as parameters?}
 
 \section{Acceleration Structures}
 \label{sec:accel}
@@ -138,11 +169,12 @@ This design follows the classic parallel spatial-hash linked-list pattern: atomi
 
 \subsection{KD-Tree}
 \label{subsec:kdtree}
-
+\todo{kd-tree explanation}
 
 
 \subsection{Sweep Lines}
 \label{subsec:sweepline}
+\todo{Sweep lines explanation}
 
 
 \subsection{Stigmergy}
