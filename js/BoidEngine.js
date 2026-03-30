@@ -106,6 +106,7 @@ export class BoidEngine
     this.paramsArray[ParamsIndex.COHESION_WEIGHT] = 0.5;   // cohesion_weight
     this.paramsArray[ParamsIndex.MARGIN] = 100.0; // margin
     this.paramsArray[ParamsIndex.TURN_FACTOR] = 0.2;   // turn_factor
+    this.paramsArray[ParamsIndex.VISION_ANGLE] = (Math.PI * 1.5);
 
     this.updateParamsArrayFromGrid();
   }
