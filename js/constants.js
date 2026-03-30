@@ -19,7 +19,7 @@ export const ParamsIndex = {
   WORLD_MAX: 12, // 12-15
   GRID_DIM: 16,  // 16-19
   MOUSE_RAY_ORIGIN: 20, // 20-22
-  UNUSED: 23,
+  VISION_ANGLE: 23,
   RAY_DIRECTION: 24, // 24-26
   FLEE_RADIUS: 27
 };

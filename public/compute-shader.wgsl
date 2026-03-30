@@ -26,7 +26,7 @@ struct SceneParams {
   grid_dim: vec4<f32>,    // 64  (.w = num_cells)
 
   ray_origin: vec3<f32>,  // 80
-  _pad2: f32,             // 92 (padding for alignment)
+  vision_angle: f32,      // 92 (vision cone angle in radians)
   ray_dir: vec3<f32>,     // 96
   flee_radius: f32,       // 108
 };
@@ -121,6 +121,14 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
   let my_cell = pos_to_cell(my_pos);
   let gd = vec3<i32>(vec3<f32>(params.grid_dim.xyz));
 
+  // Determine forward direction for vision cone checks
+  let my_speed = length(my_vel);
+  var my_forward = vec3<f32>(0.0, 0.0, 1.0);
+  if (my_speed > 0.001) {
+    my_forward = my_vel / my_speed;
+  }
+  let cos_half = cos(params.vision_angle * 0.5);
+
   var sep_sum   = vec3<f32>(0.0);
   var align_sum = vec3<f32>(0.0);
   var coh_sum   = vec3<f32>(0.0);
@@ -142,18 +150,23 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
           if (oi != idx) {
             let op = boids[oi].position.xyz;
             let ov = boids[oi].velocity.xyz;
-            let d = distance(my_pos, op);
-            if (d < separation_dist && d > 0.0) {
-              sep_sum += normalize(my_pos - op) / d;
-              cnt_s++;
-            }
-            if (d < align_dist && d > 0.0) {
-              align_sum += ov;
-              cnt_a++;
-            }
-            if (d < cohesion_dist && d > 0.0) {
-              coh_sum += op;
-              cnt_c++;
+            let vecTo = op - my_pos;
+            let d = length(vecTo);
+            if (d > 0.0) {
+              let dirTo = vecTo / d;
+              let visible = dot(my_forward, dirTo) >= cos_half;
+              if (d < separation_dist && visible) {
+                sep_sum += (-dirTo) / d;
+                cnt_s++;
+              }
+              if (d < align_dist && visible) {
+                align_sum += ov;
+                cnt_a++;
+              }
+              if (d < cohesion_dist && visible) {
+                coh_sum += op;
+                cnt_c++;
+              }
             }
           }
           cur = boid_next[oi];
