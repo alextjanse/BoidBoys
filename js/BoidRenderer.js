@@ -80,7 +80,7 @@ export class BoidRenderer
     wingRight.setAttribute('isWing', new THREE.Float32BufferAttribute(new Float32Array(wingLen).fill(1), 1));
 
     const geometry = BufferGeometryUtils.mergeGeometries([body, wingLeft, wingRight], false);
-    const material = new THREE.MeshPhongMaterial({ color: 0x00ff88 });
+    const material = new THREE.MeshPhongMaterial({ color: 0xFFFFFF });
 
     material.onBeforeCompile = (shader) =>
     {
@@ -146,8 +146,8 @@ export class BoidRenderer
 
     this.boidInstancedMesh = new THREE.InstancedMesh(geometry, material, boidCount);
 
-    const colorLeft = new THREE.Color(0x100904);
-    const colorRight = new THREE.Color(0x192230);
+    const colorLeft = new THREE.Color(0xFFFFFF);
+    const colorRight = new THREE.Color(0x000000);
     const color = new THREE.Color();
     for (let i = 0; i < boidCount; i++) {
       color.lerpColors(colorLeft, colorRight, Math.random());
