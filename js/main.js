@@ -43,6 +43,7 @@ async function init()
   document.getElementById('info-app').innerText = "WebGPU Running";
 
   renderer = new BoidRenderer('canvas-container');
+  await renderer.init();
   renderer.updateVisualBounds(engine.simulationSize);
   renderer.createInstancedMesh(boidCount);
 
