@@ -37,6 +37,8 @@ export class UIManager
     document.getElementById('coh_weight').value = p(state.params[ParamsIndex.COHESION_WEIGHT]);
     document.getElementById('margin').value = p(state.params[ParamsIndex.MARGIN]);
     document.getElementById('turn_factor').value = p(state.params[ParamsIndex.TURN_FACTOR]);
+    // Vision angle displayed in degrees for the UI
+    document.getElementById('vision_angle').value = p(state.params[ParamsIndex.VISION_ANGLE] * 180.0 / Math.PI);
   }
 
   setupEventListeners()
@@ -65,7 +67,7 @@ export class UIManager
     });
 
     const inputs = ['separation', 'align', 'cohesion', 'max_speed', 'max_force',
-      'sep_weight', 'align_weight', 'coh_weight', 'margin', 'turn_factor'];
+      'sep_weight', 'align_weight', 'coh_weight', 'margin', 'turn_factor', 'vision_angle'];
 
     inputs.forEach(id =>
     {
@@ -147,7 +149,8 @@ export class UIManager
       align_weight: parseFloat(document.getElementById('align_weight').value),
       coh_weight: parseFloat(document.getElementById('coh_weight').value),
       margin: parseFloat(document.getElementById('margin').value),
-      turn_factor: parseFloat(document.getElementById('turn_factor').value)
+      turn_factor: parseFloat(document.getElementById('turn_factor').value),
+      vision_angle: parseFloat(document.getElementById('vision_angle').value)
     };
   }
 

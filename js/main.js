@@ -13,7 +13,7 @@ let uiManager;
 
 let isSimulationRunning = true;
 let boidCount = 100000;
-let boidDensity = 0.000050;
+let boidDensity = 0.000005;
 
 let lastFrameTime = 0;
 let frameTimes = [];
@@ -88,6 +88,10 @@ async function init()
       engine.paramsArray[ParamsIndex.COHESION_WEIGHT] = values.coh_weight;
       engine.paramsArray[ParamsIndex.MARGIN] = values.margin;
       engine.paramsArray[ParamsIndex.TURN_FACTOR] = values.turn_factor;
+      // UI provides vision angle in degrees — convert to radians for the shader
+      if (typeof values.vision_angle !== 'undefined') {
+        engine.paramsArray[ParamsIndex.VISION_ANGLE] = values.vision_angle * Math.PI / 180.0;
+      }
 
       engine.syncParams();
 
@@ -103,7 +107,7 @@ async function init()
     onResetSimulation: () =>
     {
       boidCount = 100000;
-      boidDensity = 0.00005;
+      boidDensity = 0.000005;
       engine.recreateBoids(boidCount, boidDensity);
       renderer.updateVisualBounds(engine.simulationSize);
       renderer.createInstancedMesh(boidCount);
