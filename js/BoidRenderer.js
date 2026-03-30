@@ -7,7 +7,7 @@ export class BoidRenderer
   constructor(containerId)
   {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x000005);
+    this.scene.background = new THREE.Color(0x999999);
 
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 20000);
 
@@ -86,6 +86,31 @@ export class BoidRenderer
     {
       shader.uniforms.time = { value: 0 };
 
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <common>',
+        `
+          #include <common>
+          varying vec3 vInstanceColor;
+        `
+      ).replace(
+        '#include <color_fragment>',
+        `
+          #include <color_fragment>
+          diffuseColor.rgb *= vInstanceColor;
+        `
+      );
+
+      shader.vertexShader = `
+      varying vec3 vInstanceColor;
+      ${shader.vertexShader}
+    `.replace(
+        '#include <begin_vertex>',
+        `
+      #include <begin_vertex>
+      vInstanceColor = instanceColor;
+      `
+      );
+
       shader.vertexShader = `
     attribute float isWing;
     uniform float time;
@@ -96,29 +121,39 @@ export class BoidRenderer
     }
 
     ${shader.vertexShader}
-  `.replace('#include <begin_vertex>', `
-    #include <begin_vertex>
-    
-    if (isWing > 0.5) {
-      // Create unique variations per instance
-      float id = float(gl_InstanceID);
-      float speedVariation = 0.5 + hash(id + 1.0) * 0.5; // Speed between 0.5x and 1.0x
-      float phaseOffset = hash(id) * 6.28; // Phase offset between 0 and 2*PI
+  `.replace('#include <begin_vertex>',
+        `
+      #include <begin_vertex>
       
-      float phase = (time * 8.0 * speedVariation) + phaseOffset;
-      
-      float distFromHinge = max(0.0, abs(position.x) - 1.0);
-      float angle = sin(phase) * 0.5;
-      
-      transformed.y += distFromHinge * angle;
-      transformed.z += distFromHinge * abs(angle) * 0.2;
-    }
-  `);
+      if (isWing > 0.5) {
+        // Create unique variations per instance
+        float id = float(gl_InstanceID);
+        float speedVariation = 0.5 + hash(id + 1.0) * 0.5; // Speed between 0.5x and 1.0x
+        float phaseOffset = hash(id) * 6.28; // Phase offset between 0 and 2*PI
+        
+        float phase = (time * 8.0 * speedVariation) + phaseOffset;
+        
+        float distFromHinge = max(0.0, abs(position.x) - 1.0);
+        float angle = sin(phase) * 0.5;
+        
+        transformed.y += distFromHinge * angle;
+        transformed.z += distFromHinge * abs(angle) * 0.2;
+      }
+    `);
 
       material.userData.shaderUniforms = shader.uniforms;
     };
 
     this.boidInstancedMesh = new THREE.InstancedMesh(geometry, material, boidCount);
+
+    const colorLeft = new THREE.Color(0x100904);
+    const colorRight = new THREE.Color(0x192230);
+    const color = new THREE.Color();
+    for (let i = 0; i < boidCount; i++) {
+      color.lerpColors(colorLeft, colorRight, Math.random());
+      this.boidInstancedMesh.setColorAt(i, color);
+    }
+
     this.boidInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.scene.add(this.boidInstancedMesh);
   }
