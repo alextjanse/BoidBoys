@@ -116,6 +116,12 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
   let ali_w           = params.alignment_weight;
   let coh_w           = params.cohesion_weight;
 
+  // Precompute squared distance thresholds to avoid expensive sqrt for far boids
+  let sep_dist_sq = separation_dist * separation_dist;
+  let align_dist_sq = align_dist * align_dist;
+  let coh_dist_sq = cohesion_dist * cohesion_dist;
+  let max_dist_sq = max(sep_dist_sq, max(align_dist_sq, coh_dist_sq));
+
   let my_pos = boids[idx].position.xyz;
   let my_vel = boids[idx].velocity.xyz;
   let my_cell = pos_to_cell(my_pos);
@@ -151,21 +157,26 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
             let op = boids[oi].position.xyz;
             let ov = boids[oi].velocity.xyz;
             let vecTo = op - my_pos;
-            let d = length(vecTo);
-            if (d > 0.0) {
+            let d2 = dot(vecTo, vecTo);
+            if (d2 > 0.0 && d2 < max_dist_sq) {
+              // Only compute the expensive sqrt and normalized direction for nearby boids
+              let d = sqrt(d2);
               let dirTo = vecTo / d;
               let visible = dot(my_forward, dirTo) >= cos_half;
-              if (d < separation_dist && visible) {
-                sep_sum += (-dirTo) / d;
-                cnt_s++;
-              }
-              if (d < align_dist && visible) {
-                align_sum += ov;
-                cnt_a++;
-              }
-              if (d < cohesion_dist && visible) {
-                coh_sum += op;
-                cnt_c++;
+              if (visible) {
+                if (d2 < sep_dist_sq) {
+                  // separation contribution: equivalent to (-dirTo)/d == -vecTo / d^2
+                  sep_sum += (-vecTo) / d2;
+                  cnt_s++;
+                }
+                if (d2 < align_dist_sq) {
+                  align_sum += ov;
+                  cnt_a++;
+                }
+                if (d2 < coh_dist_sq) {
+                  coh_sum += op;
+                  cnt_c++;
+                }
               }
             }
           }
