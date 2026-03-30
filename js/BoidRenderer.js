@@ -1,13 +1,19 @@
 import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 
 export class BoidRenderer
 {
   constructor(containerId)
   {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x999999);
+    // this.scene.background = new THREE.Color(0x999999);
+    const loader = new EXRLoader();
+    loader.load('./resources/meadow_4k.exr', (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    this.scene.background = texture;
+    })
 
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 20000);
 
@@ -80,7 +86,7 @@ export class BoidRenderer
     wingRight.setAttribute('isWing', new THREE.Float32BufferAttribute(new Float32Array(wingLen).fill(1), 1));
 
     const geometry = BufferGeometryUtils.mergeGeometries([body, wingLeft, wingRight], false);
-    const material = new THREE.MeshPhongMaterial({ color: 0x00ff88 });
+    const material = new THREE.MeshPhongMaterial({ color: 0xFFFFFF });
 
     material.onBeforeCompile = (shader) =>
     {
@@ -147,7 +153,7 @@ export class BoidRenderer
     this.boidInstancedMesh = new THREE.InstancedMesh(geometry, material, boidCount);
 
     const colorLeft = new THREE.Color(0x100904);
-    const colorRight = new THREE.Color(0x192230);
+    const colorRight = new THREE.Color(0xAAAAAA);
     const color = new THREE.Color();
     for (let i = 0; i < boidCount; i++) {
       color.lerpColors(colorLeft, colorRight, Math.random());
