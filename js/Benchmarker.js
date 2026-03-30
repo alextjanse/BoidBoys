@@ -19,14 +19,15 @@ export class BoidBenchmarker
     this.WARM_UP_MS = 10000;
     this.RECORD_MS = 10000;
 
-    this.warmUpTimeout = null;
-    this.recordTimeout = null;
     this.warmUpEndsAt = 0;
     this.recordEndsAt = 0;
 
     this.simFrameSamples = [];
     this.renderFrameSamples = [];
     this.onEscHandler = null;
+
+    // Store current engine settings to ensure completeBenchmark has data
+    this.currentEngineState = null;
   }
 
   registerCancelHotkey()
@@ -51,82 +52,77 @@ export class BoidBenchmarker
 
   finalizeRun()
   {
-    if (this.warmUpTimeout) {
-      clearTimeout(this.warmUpTimeout);
-      this.warmUpTimeout = null;
-    }
-    if (this.recordTimeout) {
-      clearTimeout(this.recordTimeout);
-      this.recordTimeout = null;
-    }
-
     this.unregisterCancelHotkey();
     this.state = BenchmarkState.IDLE;
     this.warmUpEndsAt = 0;
     this.recordEndsAt = 0;
+    this.currentEngineState = null; // Clean up reference
     if (this.onCompleteCallback) this.onCompleteCallback();
   }
 
   cancelBenchmark(reason = 'Benchmark canceled.')
   {
     if (this.state !== BenchmarkState.WARMING_UP && this.state !== BenchmarkState.RECORDING) return;
-    this.finalizeRun();
     console.log(reason);
+    this.finalizeRun();
   }
 
-  start()
+  start(engineState = null)
   {
     if (this.state !== BenchmarkState.IDLE && this.state !== BenchmarkState.COMPLETED) {
       console.warn("Benchmark already in progress.");
       return;
     }
 
+    this.currentEngineState = engineState;
     this.frameTimes = [];
     this.simFrameSamples = [];
     this.renderFrameSamples = [];
-    this.lastFrameTime = 0;
+
+    const now = performance.now();
     this.state = BenchmarkState.WARMING_UP;
-    this.warmUpEndsAt = performance.now() + this.WARM_UP_MS;
-    this.recordEndsAt = 0;
+    this.warmUpEndsAt = now + this.WARM_UP_MS;
+    this.recordEndsAt = 0; // Will be set when recording actually starts
+
     this.registerCancelHotkey();
-
     this.onResetCallback();
+
     console.log("Benchmark: WARMING UP (10s)...");
-
-    this.warmUpTimeout = setTimeout(() =>
-    {
-      this.state = BenchmarkState.RECORDING;
-      this.lastFrameTime = performance.now();
-      this.recordEndsAt = performance.now() + this.RECORD_MS;
-      console.log("Benchmark: RECORDING (10s)...");
-
-      this.recordTimeout = setTimeout(() =>
-      {
-        this.completeBenchmark();
-      }, this.RECORD_MS);
-
-    }, this.WARM_UP_MS);
   }
 
-  recordFrame(now = null, gpuTimestampMs = null)
+  /**
+   * Main entry point for every frame. 
+   * Handles state transitions based on time to ensure sync.
+   */
+  recordFrame(now = null)
   {
-    const fallbackNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
-      ? performance.now()
-      : Date.now();
-    const timestamp = Number.isFinite(gpuTimestampMs)
-      ? gpuTimestampMs
-      : (Number.isFinite(now) ? now : fallbackNow);
+    const timestamp = Number.isFinite(now) ? now : performance.now();
 
-    if (this.state !== BenchmarkState.RECORDING) {
-      this.lastFrameTime = timestamp;
+    // PHASE 1: Handle transition from Warmup to Recording
+    if (this.state === BenchmarkState.WARMING_UP) {
+      if (timestamp >= this.warmUpEndsAt) {
+        this.state = BenchmarkState.RECORDING;
+        this.recordEndsAt = timestamp + this.RECORD_MS;
+        this.lastFrameTime = timestamp; // RESET HERE to prevent massive first delta
+        console.log("Benchmark: RECORDING (10s)...");
+      }
       return;
     }
 
-    const delta = timestamp - this.lastFrameTime;
-    if (delta > 0) {
-      this.frameTimes.push(delta);
+    // PHASE 2: Handle Recording logic
+    if (this.state === BenchmarkState.RECORDING) {
+      // Check for completion
+      if (timestamp >= this.recordEndsAt) {
+        this.completeBenchmark(this.currentEngineState);
+        return;
+      }
+
+      const delta = timestamp - this.lastFrameTime;
+      if (delta > 0) {
+        this.frameTimes.push(delta);
+      }
+      this.lastFrameTime = timestamp;
     }
-    this.lastFrameTime = timestamp;
   }
 
   recordSimulationSample(simulationMs)
@@ -145,45 +141,28 @@ export class BoidBenchmarker
 
   getStatus(now = performance.now())
   {
-    if (this.state === BenchmarkState.WARMING_UP) {
-      return {
-        visible: true,
-        phaseClass: 'warming',
-        status: 'Warming Up',
-        detail: `${Math.max(0, (this.warmUpEndsAt - now) / 1000).toFixed(1)}s remaining`,
-      };
-    }
+    const remaining = (endTime) => Math.max(0, (endTime - now) / 1000).toFixed(1);
 
-    if (this.state === BenchmarkState.RECORDING) {
-      return {
-        visible: true,
-        phaseClass: 'recording',
-        status: 'Recording',
-        detail: `${Math.max(0, (this.recordEndsAt - now) / 1000).toFixed(1)}s remaining`,
-      };
+    switch (this.state) {
+      case BenchmarkState.WARMING_UP:
+        return { visible: true, phaseClass: 'warming', status: 'Warming Up', detail: `${remaining(this.warmUpEndsAt)}s remaining` };
+      case BenchmarkState.RECORDING:
+        return { visible: true, phaseClass: 'recording', status: 'Recording', detail: `${remaining(this.recordEndsAt)}s remaining` };
+      case BenchmarkState.COMPLETED:
+        return { visible: true, phaseClass: 'completed', status: 'Completed', detail: 'Preparing export...' };
+      default:
+        return { visible: false, phaseClass: '', status: 'Idle', detail: '' };
     }
-
-    if (this.state === BenchmarkState.COMPLETED) {
-      return {
-        visible: true,
-        phaseClass: 'completed',
-        status: 'Completed',
-        detail: 'Preparing export...',
-      };
-    }
-
-    return {
-      visible: false,
-      phaseClass: '',
-      status: 'Idle',
-      detail: '',
-    };
   }
 
   async completeBenchmark(engineState)
   {
+    // Prevent double-calls if recordFrame is called while async export is running
+    if (this.state === BenchmarkState.COMPLETED) return;
+
     this.state = BenchmarkState.COMPLETED;
     this.unregisterCancelHotkey();
+
     console.log(`Benchmark COMPLETED. Captured ${this.frameTimes.length} frames.`);
 
     if (this.frameTimes.length === 0) {
@@ -194,23 +173,32 @@ export class BoidBenchmarker
 
     const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
 
+    const safeSettings = engineState || this.currentEngineState || {
+      boidCount: 0,
+      projectName: 'Unknown',
+      version: '1.0.0',
+    };
+
     try {
       await this.reportExporter.exportPerformanceReport({
         frameTimes: this.frameTimes,
-        settings: engineState,
+        settings: safeSettings,
         hardware: {
           cpu: '',
           gpu: '',
-          os: '',
+          os: navigator.platform,
         },
         metrics: {
           avgRenderTime: avg(this.renderFrameSamples),
           avgSimTime: avg(this.simFrameSamples),
+          avgFPS: 1000 / avg(this.frameTimes)
         },
       });
+    } catch (err) {
+      console.error("Export failed:", err);
     } finally {
       this.finalizeRun();
-      console.log('Benchmark flow finished. Ready for next run.');
+      console.log('Benchmark flow finished.');
     }
   }
 }

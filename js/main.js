@@ -51,7 +51,10 @@ async function init()
     () =>
     {
       uiManager.collapseSettingsPanelForBenchmark();
-      engine.resetParamsToDefaults(boidCount, boidDensity);
+      // Fully reset the simulation for a clean benchmark run
+      engine.recreateBoids(boidCount, boidDensity);
+      renderer.updateVisualBounds(engine.simulationSize);
+      renderer.createInstancedMesh(boidCount);
       engine.syncParams();
       lockCameraForBenchmark();
     },
@@ -115,7 +118,24 @@ async function init()
 
       uiManager.populateInputs({ boidCount, boidDensity, params: engine.paramsArray });
     },
-    onBenchmarkStart: () => benchmarker.start(),
+    onBenchmarkStart: () =>
+    {
+      // Capture current state BEFORE starting
+      const currentSettings = {
+        boidCount: boidCount,
+        separationWeight: engine.paramsArray[ParamsIndex.SEPARATION_WEIGHT],
+        alignmentWeight: engine.paramsArray[ParamsIndex.ALIGNMENT_WEIGHT],
+        cohesionWeight: engine.paramsArray[ParamsIndex.COHESION_WEIGHT],
+        maxSpeed: engine.paramsArray[ParamsIndex.MAX_SPEED],
+        updateFrequency: 60, // Or your target frequency
+        projectName: 'Boid Boys',
+        groupName: 'Boid Boys',
+        version: 'v1.0.0',
+      };
+
+      // Pass this object to the benchmarker
+      benchmarker.start(currentSettings);
+    },
     onImportReport: async (files) => await reportExporter.openBenchmarkPreviewFromTexFiles(files)
   };
 
@@ -205,22 +225,6 @@ async function frame()
       renderTimes.push(results.renderDelta);
       benchmarker.recordRenderSample(results.renderDelta);
     }
-  }
-
-  // Complete the benchmark asynchronously if needed
-  if (benchmarker.state === 2 && performance.now() > benchmarker.recordEndsAt) { // RECORDING
-    const engineState = {
-      boidCount,
-      separationWeight: engine.paramsArray[ParamsIndex.SEPARATION_WEIGHT],
-      alignmentWeight: engine.paramsArray[ParamsIndex.ALIGNMENT_WEIGHT],
-      cohesionWeight: engine.paramsArray[ParamsIndex.COHESION_WEIGHT],
-      maxSpeed: engine.paramsArray[ParamsIndex.MAX_SPEED],
-      updateFrequency: WORKGROUP_SIZE, // Not perfectly accurate as it's the workgroup size but this is what the original did
-      projectName: 'Boid Boys',
-      groupName: 'Boid Boys',
-      version: 'v1.0.0',
-    };
-    benchmarker.completeBenchmark(engineState);
   }
 
   renderer.render(now);
