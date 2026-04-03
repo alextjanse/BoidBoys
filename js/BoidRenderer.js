@@ -3,18 +3,20 @@ import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 
+import { getSpawnBounds, calculateSimulationSize } from './SpatialHashUtils.js';
+
 export class BoidRenderer
 {
-  constructor(containerId)
+  constructor(containerId, boidData)
   {
     this.scene = new THREE.Scene();
-    // this.scene.background = new THREE.Color(0x999999);
-    const loader = new EXRLoader();
-    loader.load('./resources/meadow_4k.exr', (texture) =>
-    {
-      texture.mapping = THREE.EquirectangularReflectionMapping;
-      this.scene.background = texture;
-    });
+    this.scene.background = new THREE.Color(0x999999);
+    // const loader = new EXRLoader();
+    // loader.load('./resources/meadow_4k.exr', (texture) =>
+    // {
+    //   texture.mapping = THREE.EquirectangularReflectionMapping;
+    //   this.scene.background = texture;
+    // });
 
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 20000);
 
@@ -34,6 +36,8 @@ export class BoidRenderer
     this.boundsLine = null;
 
     window.addEventListener('resize', this.onWindowResize.bind(this));
+
+    this.boidData = boidData;
   }
 
   // Initialize renderer backend if required (e.g., WebGPURenderer has async init)
@@ -76,7 +80,7 @@ export class BoidRenderer
     }
   }
 
-  createInstancedMesh(boidCount)
+  createInstancedMesh(boidCount, boidDensity)
   {
     if (this.boidInstancedMesh) {
       this.scene.remove(this.boidInstancedMesh);
@@ -165,8 +169,14 @@ export class BoidRenderer
     const colorLeft = new THREE.Color(0x100904);
     const colorRight = new THREE.Color(0xAAAAAA);
     const color = new THREE.Color();
+    const remapBounds = getSpawnBounds(calculateSimulationSize(boidCount, boidDensity))
     for (let i = 0; i < boidCount; i++) {
-      color.lerpColors(colorLeft, colorRight, Math.random());
+      //color.lerpColors(colorLeft, colorRight, Math.random());
+      const colorVec = new THREE.Vector3();
+      colorVec.x = this.boidData[i * 8] / (remapBounds.max.x - remapBounds.min.x);
+      colorVec.y = this.boidData[i * 8 + 1] / (remapBounds.max.y - remapBounds.min.y);
+      colorVec.z = this.boidData[i * 8 + 2] / (remapBounds.max.z - remapBounds.min.z);
+      color.setFromVector3(colorVec);
       this.boidInstancedMesh.setColorAt(i, color);
     }
 

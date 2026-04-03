@@ -28,10 +28,11 @@ export class BoidEngine
     this.bindGroupLayout = null;
     this.bindGroup = null;
     this.isMapping = false;
-
+    
+    this.boidData = new Float32Array(this.boidCount * 8);
   }
 
-  async init(boidCount, boidDensity)
+  async init(boidCount, boidDensity, boidData)
   {
     this.boidCount = boidCount;
     this.boidDensity = boidDensity;
@@ -48,7 +49,7 @@ export class BoidEngine
 
     this.resetParamsToDefaults(boidCount, boidDensity);
 
-    this.initBoidBuffers();
+    this.initBoidBuffers(boidData);
     this.initSpatialHashBuffers();
     this.initMatrixBuffers();
 
@@ -144,12 +145,11 @@ export class BoidEngine
     this.gpuDevice.queue.writeBuffer(this.uniformBuffer, 0, this.paramsArray.buffer, this.paramsArray.byteOffset, this.paramsArray.byteLength);
   }
 
-  initBoidBuffers()
+  initBoidBuffers(boidData)
   {
     if (this.boidBuffer) {
       this.boidBuffer.destroy();
     }
-    const boidData = new Float32Array(this.boidCount * 8);
     const spawnBounds = getSpawnBounds(this.simulationSize);
     for (let i = 0; i < this.boidCount; i++) {
       boidData[i * 8] = spawnBounds.min.x + Math.random() * (spawnBounds.max.x - spawnBounds.min.x);
@@ -161,6 +161,8 @@ export class BoidEngine
       boidData[i * 8 + 6] = (Math.random() - 0.5) * 4;
       boidData[i * 8 + 7] = 0.0;
     }
+
+    // const boidData = this.boidData;
 
     this.boidBuffer = this.gpuDevice.createBuffer({
       size: boidData.byteLength,
@@ -228,13 +230,13 @@ export class BoidEngine
     });
   }
 
-  recreateBoids(newCount, newDensity)
+  recreateBoids(newCount, newDensity, boidData)
   {
     this.boidCount = newCount;
     this.simulationSize = calculateSimulationSize(newCount, newDensity);
     this.resetParamsToDefaults(newCount, newDensity);
 
-    this.initBoidBuffers();
+    this.initBoidBuffers(boidData);
     this.initSpatialHashBuffers();
     this.initMatrixBuffers();
     this.syncParams();

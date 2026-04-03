@@ -21,6 +21,8 @@ let lastFPSUpdate = 0;
 let simTimes = [];
 let renderTimes = [];
 
+let isColor;
+
 const reportExporter = new PerformanceReportExporter();
 const mouse = new THREE.Vector2();
 const raycaster = new THREE.Raycaster();
@@ -35,26 +37,28 @@ window.addEventListener('mousemove', onWindowMouseMove);
 
 async function init()
 {
+  const boidData = new Float32Array(boidCount * 8);
+
   engine = new BoidEngine();
-  const useGPU = await engine.init(boidCount, boidDensity);
+  const useGPU = await engine.init(boidCount, boidDensity, boidData);
 
   if (!useGPU) return;
 
   document.getElementById('info-app').innerText = "WebGPU Running";
 
-  renderer = new BoidRenderer('canvas-container');
+  renderer = new BoidRenderer('canvas-container', boidData);
   await renderer.init();
   renderer.updateVisualBounds(engine.simulationSize);
-  renderer.createInstancedMesh(boidCount);
+  renderer.createInstancedMesh(boidCount, boidDensity);
 
   benchmarker = new BoidBenchmarker(
     () =>
     {
       uiManager.collapseSettingsPanelForBenchmark();
       // Fully reset the simulation for a clean benchmark run
-      engine.recreateBoids(boidCount, boidDensity);
+      engine.recreateBoids(boidCount, boidDensity, boidData);
       renderer.updateVisualBounds(engine.simulationSize);
-      renderer.createInstancedMesh(boidCount);
+      renderer.createInstancedMesh(boidCount, boidDensity);
       engine.syncParams();
       lockCameraForBenchmark();
     },
@@ -73,9 +77,9 @@ async function init()
     {
       boidCount = newCount;
       boidDensity = newDensity;
-      engine.recreateBoids(newCount, newDensity);
+      engine.recreateBoids(newCount, newDensity, boidData);
       renderer.updateVisualBounds(engine.simulationSize);
-      renderer.createInstancedMesh(boidCount);
+      renderer.createInstancedMesh(boidCount, boidDensity);
       uiManager.updateInfo(boidCount, engine.numCells);
     },
     onUpdateUniforms: (values) =>
@@ -112,9 +116,9 @@ async function init()
     {
       boidCount = 100000;
       boidDensity = 0.000005;
-      engine.recreateBoids(boidCount, boidDensity);
+      engine.recreateBoids(boidCount, boidDensity, boidData);
       renderer.updateVisualBounds(engine.simulationSize);
-      renderer.createInstancedMesh(boidCount);
+      renderer.createInstancedMesh(boidCount, boidDensity);
 
       uiManager.populateInputs({ boidCount, boidDensity, params: engine.paramsArray });
     },
@@ -136,7 +140,11 @@ async function init()
       // Pass this object to the benchmarker
       benchmarker.start(currentSettings);
     },
-    onImportReport: async (files) => await reportExporter.openBenchmarkPreviewFromTexFiles(files)
+    onImportReport: async (files) => await reportExporter.openBenchmarkPreviewFromTexFiles(files),
+    onColorToggle: () =>
+    {
+      isColor = !isColor;
+    }
   };
 
   uiManager = new UIManager(callbacks);
