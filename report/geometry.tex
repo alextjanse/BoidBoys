@@ -1,0 +1,15 @@
+\section{Geometrical analysis}
+Every frame, the boids have to perform a fixed-radius nearest neighbors search to determine their 
+new velocities. A common solution is spatial hashing, however, we have also analysed the geometric 
+properties of the boids in attempt to optimize the simulation differently. Unfortunately, these 
+findings have not resulted in a practical solution, but are still worth mentioning.
+
+The boids form a graph $G = (V, E)$, where $V$ are the boids and $E$ are the boids that are in 
+viewing distance of each other. This graph changes each tick of the simulation by the positions 
+in $V$ and adjusting the neighbors in $E$. Edges that stay in $E$ or are removed are easy to update; 
+check the new distance and update accordingly. Finding new edges is the complex problem.
+
+\subsection{Sweep line approach}
+In a sweep line or sweep surface algorithm, a sweep line is used to sweep over data points, looping over
+the data points in a lexicographical order. Data points pass the sweep line one by one and step by step
+a solution is constructed for the given problem that the algorithm tackles.
