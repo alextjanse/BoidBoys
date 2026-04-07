@@ -90,6 +90,28 @@ The visualisation is implemented in Javascript, where our rendering stack is bas
 
 We could have improved the visualisation by creating or using Level of Detail (LOD) systems or frustum culling optimizations. This could have sped up the rendering part of the simulation even further. By how much is unfortunately not known, as we do not currently profile the rendering part of the program explicitely.
 
+\subsection{Benchmarking System}
+To accurately quantify the performance of our WebGPU-accelerated simulation, we developed a benchmarking tool, the \texttt{BoidBenchmarker}. This system is designed to provide reproducible metrics across different hardware configurations by controlling the simulation environment and capturing granular timing data.
+
+\subsubsection{Automated Testing Workflow}
+The benchmarking process is divided into distinct operational states to ensure data integrity:
+\begin{itemize}
+    \item \textbf{Warm-up Phase:} Upon initiation, the system enters a 10-second \texttt{WARMING\_UP} state. This ensures that the GPU pipelines and caches are stabilized before measurement begins.
+    \item \textbf{Recording Phase:} Following the warm-up, the system enters a 10-second \texttt{RECORDING} phase where it captures every frame time, alongside specific simulation and rendering deltas.
+    \item \textbf{Environment Control:} To minimize external variance, the benchmarker automatically collapses UI panels, resets the simulation to a clean state, and locks the camera position for the duration of the run.
+\end{itemize}
+
+\subsubsection{Metrics and Performance Analysis}
+The system collects a variety of metrics to evaluate the efficiency of our implementation:
+\begin{itemize}
+    \item \textbf{Timing Breakdown:} The tool records individual durations for the GPU compute passes (simulation) and the Three.js WebGL draw calls (rendering).
+    \item \textbf{Stability Metrics:} Beyond average FPS, the system calculates the \say{1\% Low FPS.} This metric is for identifying micro-stuttering that may not be apparent in average frame rate calculations.
+    \item \textbf{Hardware Context:} Every report automatically captures the user's OS and hardware information (CPU and GPU) via the \texttt{HardwareInfo} interface to provide context for comparison.
+\end{itemize}
+
+\subsubsection{Data Export and Reporting}
+Results are processed by the \texttt{PerformanceReportExporter}, which supports multiple output formats to facilitate analysis and documentation. The system can generate PNG performance graphs, raw JSON data for historical records, and pre-formatted LaTeX tables for direct copy-paste support in this report. Furthermore, the tool supports importing previous JSON results to generate comparison tables, allowing us to directly measure the impact of different optimization strategies and different parameter configurations.
+
 \section{Simulating Boid behaviour}\label{sec:boids}
 % Basic description of our implementation of boid behaviour
 The behaviour of the boids is based on the boids paper by Craig Reynolds~\cite{reynolds1987flocks}. This section describes the algorithm in general, the modifications we made, and the choice of parameters.
@@ -219,6 +241,20 @@ The reason as to why we haven't implemented this in our final program is because
 \section{Problems and Limitations}
 \label{sec:problems_and_limitations}
 % Main problems we faced during the project, limitations of our program/solutions, workarounds we came up with
+
+While our WebGPU-accelerated boid simulation successfully scales to over 100,000 agents, we encountered several notable problems and limitations regarding debugging, data transfer bottlenecks, and algorithmic artifacts.
+
+\subsection{Debugging Compute Shaders}
+One of the primary limitations we ran into was the difficulty of debugging. Because the WGSL computation happens in parallel on the GPU, standard debugging methods like variable inspection or setting breakpoints are much harder to execute. This makes finding the source of an error or explaining unexpected boid behaviour significantly harder than it would be on the CPU.
+
+\subsection{GPU-CPU Readback Bottleneck}
+Another major limitation is the performance bottleneck introduced by GPU-CPU readback In our current architecture, the simulation logic runs purely on WebGPU, but the rendering pipeline uses WebGL via Three.js. This requires reading the transformation matrices back to the CPU every frame, which limits maximum performance. It would be much more optimal to render directly using WebGPU, allowing us to skip the CPU readback entirely. 
+
+\subsection{Visualisation Optimization and Profiling}
+On the rendering side, we could have improved the visualisation by implementing Level of Detail (LOD) systems or frustum culling optimizations. These additions could have sped up the rendering part of the simulation even further. However, implementing these feature would require an overhaul of the rendering pipeline since all the meshes are instanced meshes we cannot easily modify the LOD without seperating out the mesh instances into groups based on the camera distance. This would also add additional complexity.  Additionally, our overall profiling system could be improved to provide more detailed information by utilizing GPU-side performance counters.
+
+\subsection{Algorithmic and Global Interactivity Issues}
+Finally, we faced behavioral problems when attempting to implement stigmergy for global interactivity. Implementing this caused an issue where the boids became attracted to a specific slice of the space where the grid cells were located. This artifact caused the boids to cluster heavily in that area, preventing them from moving freely through the space. Although we tried to fix this issue by adjusting the spatial hash parameters, we could not find a solution that worked well enough. Because of this, it was impossible to determine if the implementation actually solved the global interactivity problem, which is why the stigmergy texture approach was excluded from the final program.
 
 \section{Results}
 \label{sec:results}
