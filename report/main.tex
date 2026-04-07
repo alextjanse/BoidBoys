@@ -126,26 +126,25 @@ This section describes the exposed parameters, their function and their default 
     \centering
     \begin{tabular}{lp{0.5\linewidth}l}
         \textbf{Parameter} & \textbf{Function} & \textbf{Default value} \\ \hline
-        separation distance & The neighbourhood radius of the seperation behaviour &? \\ \hline
-        alignment distance & The neighbourhood radius of the alignment behaviour &? \\ \hline
-        cohesion distance & The neighbourhood radius of the cohesion behaviour &? \\ \hline
-        maximum speed & The maximum units a boid can move in a single timestep &? \\ \hline
-        maximum force & The maximum amount of change to the velocity in a single timestep &? \\ \hline
-        separation weight & The relative influence of seperation when combining steering behaviours &? \\ \hline
-        alignment weight & The relative influence of alignment when combining steering behaviours &? \\ \hline
-        cohesion weight & The relative influence of cohesion when combining steering behaviours &? \\ \hline
-        margin & The minimum distance to a wall to start steering away from it &? \\ \hline
-        turnfactor & The maximum amount of change in velocity to avoid colliding with walls &? \\ \hline
-        cellsize & The size of a cell in the spatial hashing datastructure &? \\ \hline
-        world max & The bounding box size of the simulation &? \\ \hline
-        grid dim & The amount of cells in the simulation in the x, y and z direction. The w is used as a total count of cells. &? \\ \hline
-        ray origin & The origin of the mouse ray. This is the location of the mouse on the near plane of the camera &? \\ \hline
-        ray direction & The direction of the mouse ray. This is the direction of the camera view &? \\ \hline
-        flee radius & The radius of influence of the mouse ray &? \\ \hline
+        separation distance & The neighbourhood radius of the seperation behaviour & 25.0 \\ \hline
+        alignment distance & The neighbourhood radius of the alignment behaviour & 50.0 \\ \hline
+        cohesion distance & The neighbourhood radius of the cohesion behaviour & 50.0 \\ \hline
+        maximum speed & The maximum units a boid can move in a single timestep & 5.0 \\ \hline
+        maximum force & The maximum amount of change to the velocity in a single timestep & 0.1 \\ \hline
+        separation weight & The relative influence of seperation when combining steering behaviours & 1.5 \\ \hline
+        alignment weight & The relative influence of alignment when combining steering behaviours & 1.0 \\ \hline
+        cohesion weight & The relative influence of cohesion when combining steering behaviours & 0.5 \\ \hline
+        margin & The minimum distance to a wall to start steering away from it & 100.0 \\ \hline
+        turnfactor & The maximum amount of change in velocity to avoid colliding with walls & 0.2 \\ \hline
+        cellsize & The size of a cell in the spatial hashing datastructure & 25.0 \\ \hline
+        world max & The bounding box size of the simulation & Calculated \\ \hline
+        grid dim & The amount of cells in the simulation in the x, y and z direction. The w is used as a total count of cells. & Calculated \\ \hline
+        ray origin & The origin of the mouse ray. This is the location of the mouse on the near plane of the camera & Camera pos \\ \hline
+        ray direction & The direction of the mouse ray. This is the direction of the camera view & Mouse vector \\ \hline
+        flee radius & The radius of influence of the mouse ray & 12\% of width \\ \hline
     \end{tabular}
     \caption{Parameters}\label{tab:parameters}
 \end{table}
-\todo{Fill in the unknown values of table~\ref{tab:parameters} (?)}
 \todo{Mouse ray direction and origin are not actually parameters, should they be changed in code, or treated as parameters?}
 
 \section{Acceleration Structures}\label{sec:accel}
