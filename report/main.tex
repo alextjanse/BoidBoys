@@ -223,7 +223,12 @@ cursor in the direction of the camera view. The ray origin and direction are
 sent to the GPU. On the GPU side, the boid finds the closest point on the line,
 and steers away from that point.
 
-\todo{Have we made other modification to the original method?}
+Another modification is creating a `soft boundary`. To ensure the boids remain
+in the scene, but do not create an obvious bounding box shape, we have created
+a soft boundary. This boundary is implemented by adding a small force back to
+the center, when boids exit the bounding box. The boids can still exit, but are
+pushed back slightly, and even more when getting further away. This resulted in
+more natural behaviour, while still being able to frame the flocks better.
 
 \subsection{Parameter choice}\label{subsec:parameters}
 This section describes the exposed parameters, their function and their default
@@ -253,7 +258,6 @@ of the simulation. All parameters are listed in table~\ref{tab:parameters}.
     \end{tabular}
     \caption{Parameters}\label{tab:parameters}
 \end{table}
-\todo{Mouse ray direction and origin are not actually parameters, should they be changed in code, or treated as parameters?}
 
 \section{Acceleration Structures}\label{sec:accel}
 % Describe acceleration structures and ideas we had to optimize our program
@@ -439,10 +443,27 @@ In this project, I have worked on the initial setup of the boids simulation,
 before optimizing, focussing on the behavior. After that, I researched the
 different types of spatial optimization structures including ball tree, octree,
 quadtree, spatial hashing and bounding volume hierarchies. On the main code
-implementation I have contributed to the spatial hashing implementation, and
-created the mouse interaction. Besides that, I have helped others when we
-worked together on the programming. On the report I have mostly written the
-project description, software section, and the simulation chapter.
+implementation I have contributed to the spatial hashing implementation,
+created the mouse interaction, and created the soft boundary system. Besides
+that, I have helped others when we worked together on the programming. On the
+report I have mostly written the project description, software section, and the
+simulation chapter.
+
+Looking back at this project, I have become better at optimization techniques.
+While I know quite a bit about optimization, I have never created spatial
+optimization. This was also my first time working with
+web-shaders/web-rendering. The different ways to work with shaders, and what
+parts to perform on the CPU and GPU was interesting to learn about. In terms of
+crowdsimulation I mostly used this project to see how simple rules, or forces,
+can lead to complex behaviour and that not a lot is needed to create realistic
+movement. Working together with this team was nice. We all had a slightly
+different background in programming and simulations and our skills matched up
+to create something cool we all contributed to. There are some things I could
+have done better. I like to start programming to see what possibilities we
+have, but this is not always in the most optimal way. Because I started on a
+CPU-only version of the spatial hashing, we had to make some arhitecture
+changes to allow for it to run partly on the GPU. In the future I should make
+sure how we want to create things before getting stuck with bad achitecture.
 
 \subsection*{Antonio Sato}
 % Antonio's contribution and self-reflection
