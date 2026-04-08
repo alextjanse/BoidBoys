@@ -226,10 +226,11 @@ fn update_boids(@builtin(global_invocation_id) gid: vec3<u32>) {
     accel += steer * 5.0 * strength;
   }
 
-  let wall_accel = compute_wall_accel(my_pos);
+  let wall_accel = compute_wall_accel(my_pos)/2;
   var new_vel = my_vel + accel + wall_accel;
   if (length(new_vel) > max_speed) { new_vel = normalize(new_vel) * max_speed; }
-  let new_pos = clamp(my_pos + new_vel, vec3<f32>(0.0), params.world_max.xyz);
+  let new_pos = my_pos + new_vel;
+  // let new_pos = clamp(my_pos + new_vel, vec3<f32>(0.0), params.world_max.xyz);
 
   boids[idx].position = vec4<f32>(new_pos, 1.0);
   boids[idx].velocity = vec4<f32>(new_vel, 0.0);
