@@ -23,7 +23,7 @@
 
 % Colors for highlighting and coloring tables
 \usepackage{color, soul}
-\usepackage{xcolor}
+\usepackage[table]{xcolor}
 
 % Multicolumn formatting
 % In case that's the format we want
@@ -120,11 +120,12 @@ management, geometry and lighting, allowing for higher-level rendering code. We
 have used instanced rendering, where each boid is represented by a simple cone
 geometry. Moreover, we have added two rectangles to the sides of each cone in order to simulate wings flapping, by making them move continuously up and down in a synchronized manner. The transformation matrices are computed on the GPU and applied per
 instance. One of the advantages of using Three.js is the ease of use for rapid
-testing and development. Because Three.js abstracts low-level graphics programming, setting up a camera, lighting and basic geometry was easy to do.
+testing and development. Because Three.js abstracts low-level graphics programming, setting up a camera, lighting and basic geometry were easy to do.
 
 One of the primary advantages of using Three.js is the ease of use it offers for rapid testing and development. By abstracting low-level graphics programming, the framework made setting up the camera, lighting, and basic geometry straightforward to implement.  We could potentially improve the visualization further by implementing Level of Detail (LOD) systems or frustum culling optimizations. These additions would likely increase the rendering speed of the simulation. However, the exact performance gain is currently unknown, as the rendering component is not explicitly profiled at this time.
 
 \subsection{Benchmarking System}
+\label{subsec:benchmark}
 To accurately quantify the performance of our WebGPU-accelerated simulation, we
 developed a benchmarking tool, the \texttt{BoidBenchmarker}. This system is
 designed to provide reproducible metrics across different hardware
@@ -382,6 +383,10 @@ distance. This would also add additional complexity. Additionally, our overall
 profiling system could be improved to provide more detailed information by
 utilizing GPU-side performance counters.
 
+\subsection{Boid count limit}
+\label{subsec:count_limit}
+Due to the size of GPU buffers and how our CPU $\leftrightarrow$ GPU pipeline, the maximum amount of boids that our simulation can render is 1,295,419. For this reason, we are unable to fully test the limits of our program on a high-end GPU (RTX 5070). In order to allow more agents in our simulation, we could have split the array which stores their data into separate position, velocity and directions arrays. Although reporting the limits of our program could be interesting, our initial goal was to be able to work with 100K agents, so we did not find it necessary to go further than 10 times that number.
+
 \subsection{Algorithmic and Global Interactivity Issues}
 Finally, we faced behavioral problems when attempting to implement stigmergy
 for global interactivity. Implementing this caused an issue where the boids
@@ -394,9 +399,74 @@ determine if the implementation actually solved the global interactivity
 problem, which is why the stigmergy texture approach was excluded from the
 final program.
 
+
 \section{Results}
 \label{sec:results}
 % Not sure if needed, but somewhere we can show some results of our program, benchmarking, or how far we can push it
+We ran our benchmarking tool (described in Section \ref{subsec:benchmark}) on a system using an AMD Ryzen 9 9950X CPU and an Asus Prime GeForce RTX 5070 GPU. We ran the benchmarking tool with 100K boids, and utilizing the default parameters of the program for the simulation. This was ran with the blank background setting. The results can be seen in Table \ref{tab:boid-benchmark-report-100k-standard}. Our main goal of maintaining a stable 60FPS was achieved, and we see a $1\%$ Low FPS of 59.2, which shows that the achieved FPS displays very little stuttering. For further investigation, we also ran the benchmarking with 500K and 963K\footnote{Although the maximum number of boids is 1,295,419 (Section \ref{subsec:count_limit}), the benchmarking tool stops rendering the boids at 963,203, which leads to wrong measurements since the program is then only a blank screen.} boids, and in both runs we got average FPS values of approximately 60. However, we see that the stuttering in these is a lot more drastic, with $1\%$ Low FPS of almost two-thirds of the average for the former, and almost one-third for the latter. Nevertheless, we still see a mostly stable performance at 60FPS with numbers of boids much greater than what we originally set for our goal.The tables for these runs can be found in Appendix \ref{appendix:tables}.
+
+\hspace{5.0ex}
+
+For comparison, we also ran the benchmarking tool on a much less powerful system, which uses a 13th Gen Intel Core i5-1335U CPU and Intel Iris Xe Graphics integrated GPU, utilizing the same parameters as previously described; the results can be seen in Table \ref{tab:boid-benchmark-report-100k-weak}. We also ran the other two tests on this system, which can be found in the \ref{appendix:tables}. For the 100K run, we see a very noticeable decrease in performance, with the average FPS dropping to 55.1, and with FPS values as low as 40.6. This is expected as this system does not have a dedicated graphics card, but it still shows that, perhaps, the program could be even further optimized to work on lower-end machines. For the higher number of boids, we see a significant drop in FPS, which is, again, expected. These results are being displayed purely to contrast the above described performance with a low-specs system and to entertain the idea that the program could be further optimized to display better performance in such systems.
+
+
+
+\begin{table}[htbp]
+\centering
+\rowcolors{2}{gray!15}{white}
+\begin{tabular}{l p{0.68\linewidth}}
+\hline
+Metric & Value \\
+\hline
+Benchmark &  100K Boids\\
+Boid Count & 100000 \\
+Separation Weight & 1.50 \\
+Alignment Weight & 1.00 \\
+Cohesion Weight & 0.50 \\
+Max Speed & 5.00 \\
+Update Frequency & 60 \\
+Avg Simulation Time (ms) & 0.03 \\
+Avg Render Time (ms) & 0.28 \\
+Avg Frame Time (ms) & 16.68 \\
+Avg FPS & 60.0 \\
+1\% Low Frame Time (ms) & 16.90 \\
+1\% Low FPS & 59.2 \\
+CPU & AMD Ryzen 9 9950X \\
+GPU & Asus Prime GeForce RTX 5070 GDDR7 12GB\\
+\hline
+\end{tabular}
+\caption{Boid benchmark report: 100K boids}
+\label{tab:boid-benchmark-report-100k-standard}
+\end{table}
+
+
+\begin{table}[htbp]
+\centering
+\rowcolors{2}{gray!15}{white}
+\begin{tabular}{l p{0.68\linewidth}}
+\hline
+Metric & Value \\
+\hline
+Benchmark & 100K boids with lower specs \\
+Boid Count & 100000 \\
+Separation Weight & 1.50 \\
+Alignment Weight & 1.00 \\
+Cohesion Weight & 0.50 \\
+Max Speed & 5.00 \\
+Update Frequency & 60 \\
+Avg Simulation Time (ms) & 0.11 \\
+Avg Render Time (ms) & 0.84 \\
+Avg Frame Time (ms) & 18.16 \\
+Avg FPS & 55.1 \\
+1\% Low Frame Time (ms) & 24.64 \\
+1\% Low FPS & 40.6 \\
+CPU & 13th Gen Intel Core i5-1335U \\
+GPU & Intel Iris Xe Graphics \\
+\hline
+\end{tabular}
+\caption{Boid benchmark report: 100K boids with lower specs}
+\label{tab:boid-benchmark-report-100k-weak}
+\end{table}
 
 
 %\section{AI prompts}
@@ -421,7 +491,8 @@ Beyond the initial implementation, I served as the primary debugger for our WGSL
 In this project, I have worked on the initial setup of the boids simulation,
 before optimizing, focussing on the behavior. After that, I researched the
 different types of spatial optimization structures including ball tree, octree,
-quadtree, spatial hashing and bounding volume hierarchies\cite{muller_ten_minute_physics,wikipedia_octree,pharr2018pbrt_bvh}. On the main code implementation I have contributed to the spatial hashing implementation,
+quadtree, spatial hashing and bounding volume hierarchies. On the main code
+implementation I have contributed to the spatial hashing implementation,
 created the mouse interaction, and created the soft boundary system. Besides
 that, I have helped others when we worked together on the programming. On the
 report I have mostly written the project description, software section, and the
@@ -454,5 +525,122 @@ I believe I could have been more helpful to the team had I communicated better e
 \break
 \nocite{*}
 \printbibliography
+
+\break
+\appendix
+\section{Appendix: Tables}
+\label{appendix:tables}
+
+\begin{table}[htbp]
+\centering
+\rowcolors{2}{gray!15}{white}
+\begin{tabular}{l p{0.68\linewidth}}
+\hline
+Metric & Value \\
+\hline
+Benchmark & 500K Boids \\
+Boid Count & 500000 \\
+Separation Weight & 1.50 \\
+Alignment Weight & 1.00 \\
+Cohesion Weight & 0.50 \\
+Max Speed & 5.00 \\
+Update Frequency & 60 \\
+Avg Simulation Time (ms) & 0.05 \\
+Avg Render Time (ms) & 1.36 \\
+Avg Frame Time (ms) & 16.68 \\
+Avg FPS & 59.9 \\
+1\% Low Frame Time (ms) & 21.52 \\
+1\% Low FPS & 46.5 \\
+CPU & AMD Ryzen 9 9950X\\
+GPU & Asus Prime GeForce RTX 5070 GDDR7 12GB\\
+\hline
+\end{tabular}
+\caption{Boid benchmark report: 500K Boids}
+\label{tab:boid-benchmark-report-500K-standard}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\rowcolors{2}{gray!15}{white}
+\begin{tabular}{l p{0.68\linewidth}}
+\hline
+Metric & Value \\
+\hline
+Benchmark & Maximum number of boids \\
+Boid Count & 963203 \\
+Separation Weight & 1.50 \\
+Alignment Weight & 1.00 \\
+Cohesion Weight & 0.50 \\
+Max Speed & 5.00 \\
+Update Frequency & 60 \\
+Avg Simulation Time (ms) & 0.04 \\
+Avg Render Time (ms) & 3.01 \\
+Avg Frame Time (ms) & 16.67 \\
+Avg FPS & 60.0 \\
+1\% Low Frame Time (ms) & 43.76 \\
+1\% Low FPS & 22.9 \\
+CPU & AMD Ryzen 9 9950X \\
+GPU & Asus Prime GeForce RTX 5070 GDDR7 12GB\\
+\hline
+\end{tabular}
+\caption{Boid benchmark report: Maximum number of boids}
+\label{tab:boid-benchmark-report-max-standard}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\rowcolors{2}{gray!15}{white}
+\begin{tabular}{l p{0.68\linewidth}}
+\hline
+Metric & Value \\
+\hline
+Benchmark & 500K boids with lower specs \\
+Boid Count & 500000 \\
+Separation Weight & 1.50 \\
+Alignment Weight & 1.00 \\
+Cohesion Weight & 0.50 \\
+Max Speed & 5.00 \\
+Update Frequency & 60 \\
+Avg Simulation Time (ms) & 0.07 \\
+Avg Render Time (ms) & 3.62 \\
+Avg Frame Time (ms) & 62.88 \\
+Avg FPS & 15.9 \\
+1\% Low Frame Time (ms) & 130.70 \\
+1\% Low FPS & 7.7 \\
+CPU & 13th Gen Intel Core i5-1335U \\
+GPU & Intel Iris Xe Graphics \\
+\hline
+\end{tabular}
+\caption{Boid benchmark report: 500K boids with lower specs}
+\label{tab:boid-benchmark-report-500K-weak}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\rowcolors{2}{gray!15}{white}
+\begin{tabular}{l p{0.68\linewidth}}
+\hline
+Metric & Value \\
+\hline
+Benchmark & Maximum number of boids with lower specs \\
+Boid Count & 963203 \\
+Separation Weight & 1.50 \\
+Alignment Weight & 1.00 \\
+Cohesion Weight & 0.50 \\
+Max Speed & 5.00 \\
+Update Frequency & 60 \\
+Avg Simulation Time (ms) & 0.09 \\
+Avg Render Time (ms) & 5.71 \\
+Avg Frame Time (ms) & 108.38 \\
+Avg FPS & 9.2 \\
+1\% Low Frame Time (ms) & 343.60 \\
+1\% Low FPS & 2.9 \\
+CPU & 13th Gen Intel Core i5-1335U \\
+GPU & Intel Iris Xe Graphics \\
+\hline
+\end{tabular}
+\caption{Boid benchmark report: Maximum number of boids with lower specs}
+\label{tab:boid-benchmark-report-max-weak}
+\end{table}
 
 \end{document}
