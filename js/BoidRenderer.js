@@ -41,23 +41,20 @@ export class BoidRenderer
   }
 
   // Initialize renderer backend if required (e.g., WebGPURenderer has async init)
-  async init()
-  {
+  async init() {
     if (this.renderer && typeof this.renderer.init === 'function') {
       await this.renderer.init();
     }
     return;
   }
 
-  onWindowResize()
-  {
+  onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
-  updateVisualBounds(simulationSize)
-  {
+  updateVisualBounds(simulationSize) {
     if (this.boundsLine) {
       this.scene.remove(this.boundsLine);
     }
@@ -67,7 +64,7 @@ export class BoidRenderer
     this.boundsLine = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
     this.boundsLine.name = 'boid-bounds';
     this.boundsLine.position.set(simulationSize.x / 2, simulationSize.y / 2, simulationSize.z / 2);
-    this.scene.add(this.boundsLine);
+    // this.scene.add(this.boundsLine);
 
     if (this.controls) {
       this.controls.target.set(simulationSize.x / 2, simulationSize.y / 2, simulationSize.z / 2);
@@ -102,8 +99,7 @@ export class BoidRenderer
     const geometry = BufferGeometryUtils.mergeGeometries([body, wingLeft, wingRight], false);
     const material = new THREE.MeshPhongMaterial({ color: 0xFFFFFF });
 
-    material.onBeforeCompile = (shader) =>
-    {
+    material.onBeforeCompile = (shader) => {
       shader.uniforms.time = { value: 0 };
 
       shader.fragmentShader = shader.fragmentShader.replace(
@@ -184,16 +180,14 @@ export class BoidRenderer
     this.scene.add(this.boidInstancedMesh);
   }
 
-  updateInstances(matData)
-  {
+  updateInstances(matData) {
     if (this.boidInstancedMesh) {
       this.boidInstancedMesh.instanceMatrix.array.set(matData);
       this.boidInstancedMesh.instanceMatrix.needsUpdate = true;
     }
   }
 
-  render(now)
-  {
+  render(now) {
     if (this.controls) this.controls.update();
 
     if (this.boidInstancedMesh && this.boidInstancedMesh.material && this.boidInstancedMesh.material.userData && this.boidInstancedMesh.material.userData.shaderUniforms) {
