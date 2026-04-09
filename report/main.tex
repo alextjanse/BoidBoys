@@ -324,15 +324,14 @@ communication between agents. In the context of our boid simulation, this would
 involve boids leaving behind some form of \say{pheromone} or marker in the
 environment that other boids can sense and react to. This could potentially
 allow for more complex and emergent flocking behaviors without requiring direct
-communication between boids. \bigbreak \hl{HIGHLIGHT START} The way Stigmergy is implemented in Tensen's research \cite{order_of_magnitude_boids} is through a texture based approach, which allows for boids to keep a global interactivity intact throughout the simulation. Because using Spatial Hashing as described in \ref{subsec:spatial_hash} only allows for local interactivity, meaning that boids can only interact with other boids in their local neighbourhood. This is because the Spatial Hashing approach relies on a grid-based partitioning of space, which limits the interactions to nearby cells.
+communication between boids. \bigbreak
 
-\hl{HIGHLIGHT END}
+The way Stigmergy is implemented in Tensen's research \cite{order_of_magnitude_boids} is through a texture-based approach, which allows for boids to keep a global interactivity intact throughout the simulation. This contrasts with using Spatial Hashing as described in \ref{subsec:spatial_hash}, which only allows for local interactivity, meaning that boids can only interact with other boids in their local neighborhood. This is because the Spatial Hashing approach relies on a grid-based partitioning of space, which limits the interactions to nearby cells.
 
-\subsubsection*{What has been done}
-To scale up our flocking simulation, we integrated concepts from Tensen's work directly into our WebGPU pipeline. \hl{Rather than calculating boid behaviors in nearby cells, we.}
+\subsubsection*{Our Attempted Implementation}
+To explore scaling up our flocking simulation and to test global interactivity, we experimented with integrating concepts from Tensen's work directly into our WebGPU pipeline. Rather than solely relying on standard local interactions, we attempted to map these advanced spatial structures to the GPU.
 
-The core of this optimization is the implementation of a parallel Spatial Hash
-grid. The process is broken down into the following steps on the GPU:
+The core of this experimental optimization was the implementation of a parallel Spatial Hash grid. The intended process was broken down into the following steps on the GPU:
 \begin{itemize}
     \item \textbf{Grid Initialization:} The compute shader clears a buffer of cell heads, effectively resetting the spatial grid for the current frame.
     \item \textbf{Spatial Hashing (Linked Lists):} Each boid calculates which 3D grid cell it belongs to based on its current position. Using atomic operations (\texttt{atomicExchange}), the boids concurrently insert themselves into the grid, building a linked list of boids for each cell in a completely parallelized manner.
@@ -340,15 +339,17 @@ grid. The process is broken down into the following steps on the GPU:
     \item \textbf{Matrix Computation:} Finally, the compute shader calculates the $4 \times 4$ transformation matrices for each boid, which are passed directly to Three.js for instanced rendering.
 \end{itemize}
 
-\subsubsection*{Why we chose to apply this}
+\subsubsection*{Motivation for this Exploration}
 A naive boid simulation requires every boid to check its distance against every other boid to determine local flockmates. This results in an $\mathcal{O}(N^2)$ time complexity, which severely bottlenecks the simulation on the CPU, typically limiting the flock to just a few thousand individuals before frame rates plummet.
 \medbreak
-By implementing Tensen's GPU-driven spatial hashing \cite{order_of_magnitude_boids}, we localized the nearest-neighbour search, vastly reducing the number of distance calculations required per frame. Furthermore, this keeps the entire pipeline strictly on the GPU, which eliminates the massive performance overhead of transferring hundreds of thousands of vector states back and forth between CPU and GPU memory.
+By attempting to implement Tensen's GPU-driven spatial hashing \cite{order_of_magnitude_boids}, we aimed to localize the nearest-neighbour search, vastly reducing the number of distance calculations required per frame. Furthermore, keeping the entire pipeline strictly on the GPU would theoretically eliminate the massive performance overhead of transferring hundreds of thousands of vector states back and forth between CPU and GPU memory.
 \medbreak
-This architectural choice is what allows our program to bypass traditional computational limits and simulate tens, or even hundreds, of thousands of boids at smooth interactive frame rates, achieving a true order of magnitude performance increase.
+This architectural choice was intended to bypass traditional computational limits and simulate tens, or even hundreds, of thousands of boids at smooth interactive frame rates, achieving a true order of magnitude performance increase.
 
-\subsubsection*{Why is this not present in our final program?}
-The reason as to why we haven't implemented this in our final program is because of the issues we had with the implementation. Implementing this caused the boids to be attracted to a slice of the space where the grid cells were located, which caused the boids to cluster together in that area and not be able to move freely in the space. We tried to fix this issue by adjusting the parameters of the spatial hash, but we couldn't find a solution that worked well enough. This made it impossible for us to determine if the implementation actually helped resolve the issue of global interactivity, which is the main reason why we haven't included it in our final program.
+\subsubsection*{Challenges and Exclusion from the Final Program}
+Ultimately, this approach was excluded from our final program due to persistent implementation issues. Integrating this method caused the boids to become unnaturally attracted to a specific slice of the space where the grid cells were located, forcing them to cluster rigidly in that area rather than moving freely.
+\medbreak
+We attempted to fix this issue by adjusting the parameters of the spatial hash, but could not find a stable solution. Because of these spatial artifacts, it became impossible to accurately evaluate if this implementation actually resolved the issue of global interactivity. Consequently, we chose to omit this experimental feature from the final deliverable to ensure the stability and expected behavior of the core simulation.
 
 \section{Problems and Limitations}
 \label{sec:problems_and_limitations}
@@ -410,24 +411,9 @@ final program.
 \subsection*{Kian Hamidi}
 % Kian's contribution and self-reflection
 
-Coming into this project with a background in WebGPU, Three.js, and flocking
-algorithms, I felt very comfortable stepping into the technical implementation
-from day one. My primary focus was the simulation's architecture, specifically
-implementing the spatial hashing logic required for GPU-side neighbor lookups
-at scale. To validate our goal of 100,000+ agents, I developed a benchmarking
-tool that moved us beyond anecdotal observations by generating 1\% low FPS
-metrics and automated LaTeX tables. I also spent significant time researching a
-Stigmergy-based system for global interactivity; while this remained
-experimental due to visual artifacts and time constraints, it provided crucial
-insights into our grid's limitations.
+I entered the project with a strong foundation in WebGPU, Three.js, and flocking algorithms, which allowed me to hit the ground running on the core architecture from the very first week. My primary goal was to ensure the simulation could scale efficiently to meet our ambitious performance targets. To achieve this, I focused heavily on the technical implementation of the spatial hashing logic, which was critical for moving the computational burden of neighbor detection onto the GPU. To validate our progress, I also developed a comprehensive benchmarking and reporting system. This tool allowed us to move beyond anecdotal observations by capturing standardized metrics, such as 1\% low FPS counts and automated LaTeX tables, providing a data-driven backbone for our results section. I also dedicated significant time to researching and prototyping a Stigmergy-based system for global interactivity. Although this remained in the experimental phase due to time constraints and specific visual artifacts—where boids would cluster at the edges of grid slices—the research was invaluable for understanding the limitations and synchronization challenges of our spatial grid.
 
-The team's workflow was exceptionally efficient, largely because we established
-a working MVP early in the cycle. This allowed us to spend the latter half of
-the project focusing on polish and new features rather than basic
-functionality. I found it particularly rewarding that the group possessed such
-high programming fluency, which ensured that merging features and
-troubleshooting across the codebase was a low-friction, collaborative
-experience.
+Beyond the initial implementation, I served as the primary debugger for our WGSL shaders, navigating the complexities of parallel programming to resolve technical hurdles that are often difficult to track in a web environment. Reflecting on the project as a whole, I was incredibly impressed by our team's efficiency. We managed to produce a functional "MVP" very early in the cycle, which significantly reduced the typical end-of-project pressure and gave us the freedom to focus on high-level optimizations and feature expansion. I found it particularly rewarding that every member of the group possessed a high level of general programming fluency. This shared technical competence made merging diverse feature branches and troubleshooting across the codebase a low-friction, collaborative experience. The synergy between our different perspectives, combined with an open line of communication and a collective eagerness to learn, made this one of the most positive team experiences I have had. I am very proud of the cohesive, high-performance system we were able to build together.
 
 \subsection*{Alex Janse}
 % Alex's contribution and self-reflection
