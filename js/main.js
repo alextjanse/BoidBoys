@@ -12,6 +12,8 @@ let benchmarker;
 let uiManager;
 
 let isSimulationRunning = true;
+let isColorsOn = false;
+let isBgOn = false;
 let boidCount = 100000;
 let boidDensity = 0.000005;
 
@@ -20,8 +22,6 @@ let frameTimes = [];
 let lastFPSUpdate = 0;
 let simTimes = [];
 let renderTimes = [];
-
-let isColor;
 
 const reportExporter = new PerformanceReportExporter();
 const mouse = new THREE.Vector2();
@@ -49,7 +49,7 @@ async function init()
   renderer = new BoidRenderer('canvas-container', boidData);
   await renderer.init();
   renderer.updateVisualBounds(engine.simulationSize);
-  renderer.createInstancedMesh(boidCount, boidDensity);
+  renderer.createInstancedMesh(boidCount, boidDensity, isColorsOn);
 
   benchmarker = new BoidBenchmarker(
     () =>
@@ -79,7 +79,7 @@ async function init()
       boidDensity = newDensity;
       engine.recreateBoids(newCount, newDensity, boidData);
       renderer.updateVisualBounds(engine.simulationSize);
-      renderer.createInstancedMesh(boidCount, boidDensity);
+      renderer.createInstancedMesh(boidCount, boidDensity, isColorsOn);
       uiManager.updateInfo(boidCount, engine.numCells);
     },
     onUpdateUniforms: (values) =>
@@ -118,7 +118,7 @@ async function init()
       boidDensity = 0.000005;
       engine.recreateBoids(boidCount, boidDensity, boidData);
       renderer.updateVisualBounds(engine.simulationSize);
-      renderer.createInstancedMesh(boidCount, boidDensity);
+      renderer.createInstancedMesh(boidCount, boidDensity, isColorsOn);
 
       uiManager.populateInputs({ boidCount, boidDensity, params: engine.paramsArray });
     },
@@ -141,9 +141,14 @@ async function init()
       benchmarker.start(currentSettings);
     },
     onImportReport: async (files) => await reportExporter.openBenchmarkPreviewFromTexFiles(files),
-    onColorToggle: () =>
+    onColorToggle: (isColors) =>
     {
-      isColor = !isColor;
+      isColorsOn = isColors;
+    },
+    onBgToggle: (isBg) =>
+    {
+      isBgOn = isBg;
+      renderer.updateBackground(isBgOn);
     }
   };
 

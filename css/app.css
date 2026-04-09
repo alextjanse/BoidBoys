@@ -25,6 +25,18 @@ a,
     border-color: #1861ac;
 }
 
+.btn-color-off{
+    color: #fff;
+    background-color: #000;
+    border-color: #000;
+}
+
+.btn-color-on{
+    color: #000;
+    background-color: #AA00AA;
+    border-color: #AA00AA;
+}
+
 .btn:focus,
 .btn:active:focus,
 .btn-link.nav-link:focus,

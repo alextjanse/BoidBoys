@@ -6,6 +6,8 @@ export class UIManager
   {
     this.callbacks = callbacks;
     this.isSimulationRunning = true;
+    this.isColorsOn = false;
+    this.isBgOn = false;
     this.wasSettingsPanelOpenBeforeBenchmark = null;
 
     this.boidCountInput = document.getElementById('boid-count');
@@ -135,6 +137,33 @@ export class UIManager
         event.target.value = '';
       }
     });
+
+    document.getElementById('toggle-colors-btn').addEventListener('click', () =>
+    {
+      this.isColorsOn = !this.isColorsOn;
+      this.updateColorButton();
+      this.callbacks.onColorToggle(this.isColorsOn);
+
+      // Restart with current settings
+      const inputCount = parseInt(this.boidCountInput.value, 10);
+      let inputDensity = parseFloat(this.boidDensityInput.value);
+      if (isNaN(inputDensity) || inputDensity <= 0) inputDensity = this.callbacks.getBoidDensity();
+      if (isNaN(inputCount) || inputCount <= 0) inputCount = this.callbacks.getBoidCount();
+
+      this.callbacks.onRecreateBoids(inputCount, inputDensity);
+
+      this.isSimulationRunning = true;
+      this.updateStartPauseButton();
+      this.callbacks.onSimulationToggle(true);
+    }
+    );
+
+    document.getElementById('toggle-bg-btn').addEventListener('click', () =>
+    {
+      this.isBgOn = !this.isBgOn;
+      // this.updateBgButton();
+      this.callbacks.onBgToggle(this.isBgOn);
+    });
   }
 
   getUniformValues()
@@ -166,6 +195,21 @@ export class UIManager
       icon.className = 'bi bi-play-fill';
       btn.classList.add('btn-warning');
       btn.classList.remove('btn-success');
+    }
+  }
+
+  updateColorButton()
+  {
+    const btn = document.getElementById('toggle-colors-btn');
+    const icon = document.getElementById('color-icon');
+    if (this.isColorsOn) {
+      btn.classList.add('btn-color-on');
+      btn.classList.remove('btn-color-off');
+      icon.className = 'bi bi-brush-fill';
+    } else {
+      btn.classList.remove('btn-color-on');
+      btn.classList.add('btn-color-off');
+      icon.className = 'bi bi-brush';
     }
   }
 

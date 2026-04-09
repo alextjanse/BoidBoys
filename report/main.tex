@@ -54,7 +54,7 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\title{Boid Boys}
+\title{Counting Crows - Group 2b}
 
 \author{ Kian Hamidi, Alex Janse, Jaël Kwakkel, Antonio Sato }
 
@@ -83,12 +83,12 @@ before giving the results we have achieved. \todo{Update this section if we
 \section{Software used}\label{sec:software}
 % Provide details of software used (Threejs and WebGPU)
 This chapter describes the choice of programming language, framework and
-utulization of the GPU for both the simulation and visualization of the model.
+utilization of the GPU for both the simulation and visualization of the model.
 
 \subsection{Simulation}\label{subsec:simulation}
 % WebGPU, js, etc
 The simulation is performed using a combination of Javascript on the CPU side,
-and WGSL (WebGPU Shading Language) on the GPU side. The javaScript code is
+and WGSL (WebGPU Shading Language) on the GPU side. The JavaScript code is
 responsible for initializing GPU resources, dispatching compute workloads, and
 synchronizing simulation parameters. WGSL is used to define a compute shader
 that executes directly on the GPU, allowing parallel calculation of boid
@@ -101,7 +101,7 @@ Another advantage was the fine-grained control. By allowing us to explicitely
 define buffers and memory layout, we were able to implement optimizations such
 as tight memory packing, and reading back to the CPU in a structured way.
 
-Some limitations we ran into were the difficulty of debugging. Computation
+The main limitation we ran into when working with WGSL was the difficulty of debugging the program. Computation
 happens in parallel, and variable inspection or breakpoints are way harder to
 execute. This makes finding the source of an error or explaining unexpected
 behaviour harder than on the CPU. Another limitation is the bottleneck
@@ -111,15 +111,15 @@ using WebGPU, skipping the CPU readback entirely. Our current profiling system
 can also be improved to give more detailed information and by using GPU-side
 performance counters.
 
-\subsection{Visualisation}\label{subsec:visualisation}
+\subsection{Visualization}\label{subsec:visualisation}
 % Threejs, instancedmesh, animation?, etc
-The visualisation is implemented in Javascript, where our rendering stack is
+The visualization is implemented in JavaScript, where our rendering stack is
 based on Three.js, which internally uses WebGL. Three.js provides camera
 management, geometry and lighting, allowing for higher-level rendering code. We
 have used instanced rendering, where each boid is represented by a simple cone
-geometry. The transformation matrices are computed on the GPU and applied per
+geometry. Moreover, we have added two rectangles to the sides of each cone in order to simulate wings flapping, by making them move continuously up and down in a synchronized manner. The transformation matrices are computed on the GPU and applied per
 instance. One of the advantages of using Three.js is the ease of use for rapid
-testing and development. Because it abstraact low-level graphics programming,
+testing and development. \hl{Because it abstraact low-level graphics programming},
 setting up a camera, lighting and basic geometry was easy to do.
 
 We could have improved the visualisation by creating or using Level of Detail
@@ -164,35 +164,33 @@ optimization strategies and different parameter configurations.
 
 \section{Simulating Boid behaviour}\label{sec:boids}
 % Basic description of our implementation of boid behaviour
-The behaviour of the boids is based on the boids paper by Craig
-Reynolds~\cite{reynolds1987flocks}. This section describes the algorithm in
+The behaviour of the boids is based on the boids paper by Reynolds~\cite{reynolds1987flocks}. This section describes the algorithm in
 general, the modifications we made, and the choice of parameters.
 
 \subsection{The model}\label{subsec:model}
 
-The main model consists of a combination of the following 3 steering
-behaviours: seperation, alignment and cohesion. Seperation aims to make sure
+The main model consists of a combination of three steering
+behaviours: separation, alignment and cohesion. Separation aims to make sure
 boids do not collide or crowd too much. A force is applied opposite to
-neighbouring boids, where closer boids are considered heavier. Alignment is
+neighbouring boids, where closer boids contribute more to the force than farther ones. Alignment is
 used to steer boids in the same general direction, aligning with their
 neighbours. This is calculated by taking the average direction of neighbouring
 agents. The cohesion steering behaviour is used to remain a group. The boids
 stick together to form a cohesive flock, which can be identified as a group.
 Cohesion is calculated by steering towards the average position of neighbouring
-boids. Combining these 3 steering behaviours with different influence strength
+boids. Combining these three behaviours with different influence strength
 results in a realistic flock of birds. Finding the neighbouring birds is based
-on a radius around the bird, as well as a maximum angle. \todo{Have we
-    implemented the vision angle, or just the radius?} This is used to emulate the
-vision of a bird, any boids outside the range are ignored.
+on a radius around the bird, as well as a maximum angle of vision directly in front of it. This is used to emulate the
+vision of a bird, and any boids outside the range are ignored.
 
 Our implementation consists of a CPU and a GPU part. The CPU part handles the
 interaction with the user, which is the definition of parameters, starting and
 stopping the simulation, and the mouse cursor interacting with the boids. More
 information of mouse interaction in~\ref{subsec:modifications}. After the user
-input has been gathered, the current state of the simulation is send to the
-GPU\@. Table~\ref{tab:bindings} displays the data that is send to the GPU\@.
+input has been gathered, the current state of the simulation is sent to the
+GPU\@. Table~\ref{tab:bindings} displays the data that is sent to the GPU\@.
 Note that this is required information for the basic simulation, and does not
-include the data needed for any acceleration structure. Chapter~\ref{sec:accel}
+include the data needed for any acceleration structures. Section~\ref{sec:accel}
 will go into more detail of the chosen structure to find neighbourhoods in a
 fast way.
 
@@ -208,43 +206,41 @@ fast way.
 \end{table}
 
 After the simulation has been performed, the altered data is sent back to the
-cpu and rendered. The rendering is done as an instancedmesh, which means that
-all the boids are combined into a single mesh, and drawn as a single draw call.
+CPU and rendered. The rendering is done as an \texttt{InstancedMesh}\footnote{\texttt{three.js} \href{https://threejs.org/docs/\#InstancedMesh}{documentation on \texttt{InstancedMesh}}}, meaning 
+all boids are combined into a single mesh, and drawn as a single draw call.
 This is possible, because all boids use the same mesh as a base, and only a
-rotation and translation is applied. The usage of an instancedmesh results in
+rotation and translation is applied. The usage of an \texttt{InstancedMesh} results in
 faster rendering times.
 
 \subsection{Our modifications}\label{subsec:modifications}
-While the simulation started of as an exact implementation of the boids paper,
-we have made some modifications. One of the modifications is the interaction
-with the mouse cursor. We have created a system where the boids flee from a
-line emitted from the cursor. This system works by casting a ray from the mouse
+While the simulation started of as an exact implementation of Reynold's paper,
+we have made some modifications. For instance, we added an interaction
+between the boids and the mouse cursor. We have created a system where the boids flee from a
+line emitted from the cursor. This system works by casting a ray from the
 cursor in the direction of the camera view. The ray origin and direction are
 sent to the GPU. On the GPU side, the boid finds the closest point on the line,
 and steers away from that point.
 
-Another modification is creating a `soft boundary`. To ensure the boids remain
-in the scene, but do not create an obvious bounding box shape, we have created
-a soft boundary. This boundary is implemented by adding a small force back to
-the center, when boids exit the bounding box. The boids can still exit, but are
-pushed back slightly, and even more when getting further away. This resulted in
+Another modification is creating a \say{soft boundary}. This ensure the boids remain
+in the scene, but do not create an obvious bounding box shape. This boundary is implemented by adding a small force back to
+the center when boids exit the bounding box, which is stronger the further away from the center the model is. They can still exit the cubic bounding area, but are slightly pulled back towards the center. This resulted in
 more natural behaviour, while still being able to frame the flocks better.
 
 \subsection{Parameter choice}\label{subsec:parameters}
 This section describes the exposed parameters, their function and their default
 value. Altering these parameters can change the behaviour, performance or scale
-of the simulation. All parameters are listed in table~\ref{tab:parameters}.
+of the simulation. All parameters are listed in Table~\ref{tab:parameters}.
 
 \begin{table}[H]
     \centering
     \begin{tabular}{lp{0.5\linewidth}l}
         \textbf{Parameter}  & \textbf{Function}                                                                                           & \textbf{Default value} \\ \hline
-        separation distance & The neighbourhood radius of the seperation behaviour                                                        & 25.0                   \\ \hline
+        separation distance & The neighbourhood radius of the separation behaviour                                                        & 25.0                   \\ \hline
         alignment distance  & The neighbourhood radius of the alignment behaviour                                                         & 50.0                   \\ \hline
         cohesion distance   & The neighbourhood radius of the cohesion behaviour                                                          & 50.0                   \\ \hline
         maximum speed       & The maximum units a boid can move in a single timestep                                                      & 5.0                    \\ \hline
         maximum force       & The maximum amount of change to the velocity in a single timestep                                           & 0.1                    \\ \hline
-        separation weight   & The relative influence of seperation when combining steering behaviours                                     & 1.5                    \\ \hline
+        separation weight   & The relative influence of separation when combining steering behaviours                                     & 1.5                    \\ \hline
         alignment weight    & The relative influence of alignment when combining steering behaviours                                      & 1.0                    \\ \hline
         cohesion weight     & The relative influence of cohesion when combining steering behaviours                                       & 0.5                    \\ \hline
         margin              & The minimum distance to a wall to start steering away from it                                               & 100.0                  \\ \hline
@@ -269,7 +265,7 @@ of the simulation. All parameters are listed in table~\ref{tab:parameters}.
 To try to get 100,000 boids simulated at a steady 60fps, we have explored a
 variety of spatial data acceleration structures. The main bottleneck in the
 simulation was finding neighbouring boids. To improve the speed of this, it is
-important that the distance is not performed on every boid in the simulation.
+important that the distance calculation is not performed for every boid pair in the simulation.
 This would result in a $\mathcal{O}(N^2)$ time complexity. While this is
 managable with a low amount of boids, it reduces the fps massively when scaling
 to a larger simulation size. This chapter will describe the different data
@@ -280,19 +276,24 @@ strucures we have tried, with their strengths and weaknesses.
 
 Spatial hashing is used to accelerate nearest-neighbour queries so each boid
 only inspects nearby flockmates instead of the entire set. A regular 3D grid
-partitions world space; each boid is mapped to a cell and cells store linked
+partitions world space; each boid is mapped to a cell and cells stores linked
 lists of boid indices. This reduces the naive $\mathcal{O}(N^2)$ neighbour
 search to a local search over the boid population inside a small neighbourhood
-(the surrounding $3 \times 3 \times 3$ cells).
+(the surrounding $3 \times 3 \times 3$ cell volume).
 
 Implementation details:
 \begin{itemize}
     \item \textbf{Grid parameters:} The JavaScript side computes cell size and grid dimensions in \texttt{calculateGridDimensions()}. The chosen \texttt{cell\_size} is based on behaviour distances so neighbours fall into adjacent cells.
+    
     \item \textbf{Buffers:} Two GPU storage buffers implement the structure: \texttt{cell\_heads} (an array of atomic integers containing the head index for each cell) and \texttt{boid\_next} (an array of ints forming the linked list next pointers for each boid). Buffers are created and sized in \texttt{initSpatialHashBuffers()}.
+    
     \item \textbf{Coordinate helpers:} The compute shader provides \path{pos_to_cell()} and \path{cell_to_index()} helpers to quantize world positions to integer cell coordinates and to flatten 3D coordinates to a 1D cell index.
+    
     \item \textbf{Build phase (Pass 1 \& 2):} The GPU executes a two-step build: (a) clear all \texttt{cell\_heads} to \texttt{-1} using \texttt{atomicStore}, and (b) run a parallel insert where each boid computes its cell index and calls \path{atomicExchange(&cell_heads[ci], i32(idx))}. The returned old head is written into \path{boid_next[idx]}, producing a thread-safe linked list per cell.
-    \item \textbf{Query/update phase (Pass 3):} For each boid the shader computes its home cell, then loops the $3 \times 3 \times 3$ neighbourhood. For each neighbour cell it reads the head with \path{atomicLoad(\&cell_heads[ci])} and traverses the linked list via \path{boid_next} until \texttt{-1} is reached (the traversal is bounded to avoid pathological loops). During traversal the shader accumulates separation, alignment and cohesion contributions from neighbours.
-    \item \textbf{All-GPU pipeline:} The implementation keeps the entire update pipeline on the GPU: building the hash, computing forces, and producing per-boid 4x4 transformation matrices for instanced rendering. This avoids expensive CPU\textless-\textgreater GPU transfers and enables scaling to many thousands of boids.
+    
+    \item \textbf{Query/update phase (Pass 3):} For each boid the shader computes its home cell, then loops the $3 \times 3 \times 3$ neighbourhood. For each neighbour, cell it reads the head with \path{atomicLoad(\&cell_heads[ci])} and traverses the linked list via \path{boid_next} until \texttt{-1} is reached (the traversal is bounded to avoid pathological loops). During traversal the shader accumulates separation, alignment and cohesion contributions from neighbours.
+    
+    \item \textbf{All-GPU pipeline:} The implementation keeps the entire update pipeline on the GPU: building the hash, computing forces, and producing per-boid 4x4 transformation matrices for instanced rendering. This avoids expensive CPU $\leftrightarrow$ GPU transfers and enables scaling to many thousands of boids.
 \end{itemize}
 
 Key WGSL bindings and shader details are declared near the top of the compute
@@ -321,20 +322,15 @@ real-time flocking.
 \subsection*{The idea}
 The idea behind stigmergy is to use the environment as a medium for indirect
 communication between agents. In the context of our boid simulation, this would
-involve boids leaving behind some form of "pheromone" or marker in the
+involve boids leaving behind some form of \say{pheromone} or marker in the
 environment that other boids can sense and react to. This could potentially
 allow for more complex and emergent flocking behaviors without requiring direct
-communication between boids. \bigbreak The way Stigmergy is implemented in Mark
-Tensen's research \cite{order_of_magnitude_boids} is though a texture based
-approach. Which allows for boids to keep a global interactivity intact
-thoughout the simulation. Because using Spatial Hashing like we do
-\ref{subsec:spatial_hash} only allows for local interactivity, meaning that
-boids can only interact with other boids in their local neighbourhood. This is
-because the Spatial Hashing approach relies on a grid-based partitioning of
-space, which limits the interactions to nearby cells.
+communication between boids. \bigbreak \hl{HIGHLIGHT START} The way Stigmergy is implemented in Tensen's research \cite{order_of_magnitude_boids} is through a texture based approach, which allows for boids to keep a global interactivity intact throughout the simulation. Because using Spatial Hashing as described in \ref{subsec:spatial_hash} only allows for local interactivity, meaning that boids can only interact with other boids in their local neighbourhood. This is because the Spatial Hashing approach relies on a grid-based partitioning of space, which limits the interactions to nearby cells.
+
+\hl{HIGHLIGHT END}
 
 \subsubsection*{What has been done}
-To scale up our flocking simulation, we integrated concepts from Mark Tensen's research \cite{order_of_magnitude_boids} directly into our WebGPU pipeline. Rather than calculating boid behaviors in nearby cells, we.
+To scale up our flocking simulation, we integrated concepts from Tensen's work directly into our WebGPU pipeline. \hl{Rather than calculating boid behaviors in nearby cells, we.}
 
 The core of this optimization is the implementation of a parallel Spatial Hash
 grid. The process is broken down into the following steps on the GPU:
@@ -348,12 +344,12 @@ grid. The process is broken down into the following steps on the GPU:
 \subsubsection*{Why we chose to apply this}
 A naive boid simulation requires every boid to check its distance against every other boid to determine local flockmates. This results in an $\mathcal{O}(N^2)$ time complexity, which severely bottlenecks the simulation on the CPU, typically limiting the flock to just a few thousand individuals before frame rates plummet.
 \medbreak
-By implementing Tensen's GPU-driven spatial hashing \cite{order_of_magnitude_boids}, we localized the nearest-neighbor search, vastly reducing the number of distance calculations required per frame. Furthermore, keeping the entire pipeline strictly on the GPU. Which eliminates the massive performance overhead of transferring hundreds of thousands of vector states back and forth between CPU and GPU memory.
+By implementing Tensen's GPU-driven spatial hashing \cite{order_of_magnitude_boids}, we localized the nearest-neighbour search, vastly reducing the number of distance calculations required per frame. Furthermore, this keeps the entire pipeline strictly on the GPU, which eliminates the massive performance overhead of transferring hundreds of thousands of vector states back and forth between CPU and GPU memory.
 \medbreak
 This architectural choice is what allows our program to bypass traditional computational limits and simulate tens, or even hundreds, of thousands of boids at smooth interactive frame rates, achieving a true order of magnitude performance increase.
 
 \subsubsection*{Why is this not present in our final program?}
-The reason as to why we haven't implemented this in our final program is because of the issues we had with the implementation. Implementing this caused the boids to be atteracted to a slice of the space where the grid cells were located, which caused the boids to cluster together in that area and not be able to move freely in the space. We tried to fix this issue by adjusting the parameters of the spatial hash, but we couldn't find a solution that worked well enough. This made it impossible for us to deteremin if the implementation actually helped resolve the issue of global interactivity, which is the main reason why we haven't included it in our final program.
+The reason as to why we haven't implemented this in our final program is because of the issues we had with the implementation. Implementing this caused the boids to be attracted to a slice of the space where the grid cells were located, which caused the boids to cluster together in that area and not be able to move freely in the space. We tried to fix this issue by adjusting the parameters of the spatial hash, but we couldn't find a solution that worked well enough. This made it impossible for us to determine if the implementation actually helped resolve the issue of global interactivity, which is the main reason why we haven't included it in our final program.
 
 \section{Problems and Limitations}
 \label{sec:problems_and_limitations}
@@ -372,19 +368,19 @@ boid behaviour significantly harder than it would be on the CPU.
 
 \subsection{GPU-CPU Readback Bottleneck}
 Another major limitation is the performance bottleneck introduced by GPU-CPU
-readback In our current architecture, the simulation logic runs purely on
+readback. In our current architecture, the simulation logic runs purely on
 WebGPU, but the rendering pipeline uses WebGL via Three.js. This requires
 reading the transformation matrices back to the CPU every frame, which limits
 maximum performance. It would be much more optimal to render directly using
 WebGPU, allowing us to skip the CPU readback entirely.
 
-\subsection{Visualisation Optimization and Profiling}
-On the rendering side, we could have improved the visualisation by implementing
+\subsection{Visualization, Optimization and Profiling}
+On the rendering side, we could have improved the visualization by implementing
 Level of Detail (LOD) systems or frustum culling optimizations. These additions
 could have sped up the rendering part of the simulation even further. However,
 implementing these feature would require an overhaul of the rendering pipeline
 since all the meshes are instanced meshes we cannot easily modify the LOD
-without seperating out the mesh instances into groups based on the camera
+without separating out the mesh instances into groups based on the camera
 distance. This would also add additional complexity. Additionally, our overall
 profiling system could be improved to provide more detailed information by
 utilizing GPU-side performance counters.
@@ -393,7 +389,7 @@ utilizing GPU-side performance counters.
 Finally, we faced behavioral problems when attempting to implement stigmergy
 for global interactivity. Implementing this caused an issue where the boids
 became attracted to a specific slice of the space where the grid cells were
-located. This artifact caused the boids to cluster heavily in that area,
+located. This made the boids cluster in that area,
 preventing them from moving freely through the space. Although we tried to fix
 this issue by adjusting the spatial hash parameters, we could not find a
 solution that worked well enough. Because of this, it was impossible to
@@ -405,7 +401,8 @@ final program.
 \label{sec:results}
 % Not sure if needed, but somewhere we can show some results of our program, benchmarking, or how far we can push it
 
-\section{AI prompts}
+
+%\section{AI prompts}
 % Necessary?
 
 \section*{Contributions and Self-reflections}
@@ -467,6 +464,11 @@ sure how we want to create things before getting stuck with bad achitecture.
 
 \subsection*{Antonio Sato}
 % Antonio's contribution and self-reflection
+I came to this project with very little experience with JavaScript, three.js and HTML, and no prior experience with GPU programming. For what was relevant for this project, I had only previously worked directly with GLSL in the implementation of vertex and fragment shaders. For this reason, I felt that I wasn't able to do much at the beginning, while the team set up the project, as I still needed to learn the basics. At first, I found myself most useful during our group meetings, when we mostly discussed the overall details of the project, rather than direct implementations, as I was able to find literature on the relevant topics and discuss our goals for the project. 
+
+The group was very efficient during the first couple of weeks, meaning that we already had a simulation running and a functional UI. My main contribution during this part was connecting the modifiable parameters in the UI to the WebGPU pipeline. Further along the line, I attempted implementing an approximate nearest-neighbours search in the GPU \cite{leite2012nearest} in order to optimize the efficiency of the program, but it turned out to not have any meaningful impact on our results. I also experimented with different shapes for the bounding box (e.g. sphere, torus) and added the EXR background to the program, instead of a blank one. Lastly, I implemented a functionality to change vary the color of each boid based on its starting position, as a way to observe how the starting position of boids affected their position and behaviour further into the simulation. I was also responsible for setting up the report and bibliography, and proof-reading.
+
+I believe I could have been more helpful to the team had I communicated better early on in the project and asked for help earlier in how to implement certain systems, as I spent a lot of my time trying to understand the inner-workings of the program until I was able to attempt implementing things. I felt overwhelmed at first, since everyone in the group seemed very knowledgeable of the tools and knew where to start, and once I started properly communicating (about 1.5 to 2 weeks in) most of the basic functionalities had already been implemented. I still feel I was helpful and could contribute during group meetings, and I believe I understand our implementation very well and could reproduce it given enough time, but looking back made me realize I could have started being helpful earlier on.
 
 \break
 \nocite{*}

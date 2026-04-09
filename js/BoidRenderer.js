@@ -77,7 +77,21 @@ export class BoidRenderer
     }
   }
 
-  createInstancedMesh(boidCount, boidDensity)
+  updateBackground(isBgOn)
+  {
+    if (isBgOn) {
+      const loader = new EXRLoader();
+      loader.load('./resources/meadow_4k.exr', (texture) =>
+      {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+        this.scene.background = texture;
+      });
+    } else {
+      this.scene.background = new THREE.Color(0x999999);
+    }
+  }
+
+  createInstancedMesh(boidCount, boidDensity, isColorsOn)
   {
     if (this.boidInstancedMesh) {
       this.scene.remove(this.boidInstancedMesh);
@@ -167,12 +181,14 @@ export class BoidRenderer
     const color = new THREE.Color();
     const remapBounds = getSpawnBounds(calculateSimulationSize(boidCount, boidDensity))
     for (let i = 0; i < boidCount; i++) {
-      //color.lerpColors(colorLeft, colorRight, Math.random());
-      const colorVec = new THREE.Vector3();
-      colorVec.x = this.boidData[i * 8] / (remapBounds.max.x - remapBounds.min.x);
-      colorVec.y = this.boidData[i * 8 + 1] / (remapBounds.max.y - remapBounds.min.y);
-      colorVec.z = this.boidData[i * 8 + 2] / (remapBounds.max.z - remapBounds.min.z);
-      color.setFromVector3(colorVec);
+      if (!isColorsOn) {color.lerpColors(colorLeft, colorRight, Math.random());}
+      else {
+        const colorVec = new THREE.Vector3();
+        colorVec.x = this.boidData[i * 8] / (remapBounds.max.x - remapBounds.min.x);
+        colorVec.y = this.boidData[i * 8 + 1] / (remapBounds.max.y - remapBounds.min.y);
+        colorVec.z = this.boidData[i * 8 + 2] / (remapBounds.max.z - remapBounds.min.z);
+        color.setFromVector3(colorVec);
+      }
       this.boidInstancedMesh.setColorAt(i, color);
     }
 
