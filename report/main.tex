@@ -119,8 +119,7 @@ management, geometry and lighting, allowing for higher-level rendering code. We
 have used instanced rendering, where each boid is represented by a simple cone
 geometry. Moreover, we have added two rectangles to the sides of each cone in order to simulate wings flapping, by making them move continuously up and down in a synchronized manner. The transformation matrices are computed on the GPU and applied per
 instance. One of the advantages of using Three.js is the ease of use for rapid
-testing and development. \hl{Because it abstraact low-level graphics programming},
-setting up a camera, lighting and basic geometry was easy to do.
+testing and development. Because Three.js abstracts low-level graphics programming, setting up a camera, lighting and basic geometry was easy to do.
 
 We could have improved the visualisation by creating or using Level of Detail
 (LOD) systems or frustum culling optimizations. This could have sped up the
