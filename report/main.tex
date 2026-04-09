@@ -112,21 +112,9 @@ can also be improved to give more detailed information and by using GPU-side
 performance counters.
 
 \subsection{Visualization}\label{subsec:visualisation}
-% Threejs, instancedmesh, animation?, etc
-The visualization is implemented in JavaScript, where our rendering stack is
-based on Three.js, which internally uses WebGL. Three.js provides camera
-management, geometry and lighting, allowing for higher-level rendering code. We
-have used instanced rendering, where each boid is represented by a simple cone
-geometry. Moreover, we have added two rectangles to the sides of each cone in order to simulate wings flapping, by making them move continuously up and down in a synchronized manner. The transformation matrices are computed on the GPU and applied per
-instance. One of the advantages of using Three.js is the ease of use for rapid
-testing and development. \hl{Because it abstraact low-level graphics programming},
-setting up a camera, lighting and basic geometry was easy to do.
+The visualization is implemented in JavaScript using a rendering stack based on Three.js, which internally utilizes WebGL. Three.js provides comprehensive camera management, geometry, and lighting, enabling the use of higher-level rendering code. We employed instanced rendering, where each boid is represented by a simple cone geometry. Furthermore, we added two rectangles to the sides of each cone to simulate flapping wings by having them move continuously in a synchronized manner. The transformation matrices for these instances are computed on the GPU.
 
-We could have improved the visualisation by creating or using Level of Detail
-(LOD) systems or frustum culling optimizations. This could have sped up the
-rendering part of the simulation even further. By how much is unfortunately not
-known, as we do not currently profile the rendering part of the program
-explicitely.
+One of the primary advantages of using Three.js is the ease of use it offers for rapid testing and development. By abstracting low-level graphics programming, the framework made setting up the camera, lighting, and basic geometry straightforward to implement.  We could potentially improve the visualization further by implementing Level of Detail (LOD) systems or frustum culling optimizations. These additions would likely increase the rendering speed of the simulation. However, the exact performance gain is currently unknown, as the rendering component is not explicitly profiled at this time.
 
 \subsection{Benchmarking System}
 To accurately quantify the performance of our WebGPU-accelerated simulation, we

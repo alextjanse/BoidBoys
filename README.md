@@ -12,7 +12,7 @@ INFOMCRWS assignment about simulating 100k agents in a 3D world, using WASM and 
 
 2. Start the development server:
    ```
-   npm run dev
+   npx vite run
    ```
 
 3. Open your browser to the URL shown in the terminal (typically http://localhost:5173)
