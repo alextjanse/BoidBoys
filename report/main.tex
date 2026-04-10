@@ -305,13 +305,36 @@ neighbourhood traversals for behaviour computation. It provides a practical
 balance between memory use, parallelism and neighbor-search accuracy for
 real-time flocking.
 
-\subsection{KD-Tree}
-\label{subsec:kdtree}
-\todo{kd-tree explanation}
+% \subsection{KD-Tree}
+% \label{subsec:kdtree}
+% \todo{kd-tree explanation}
 
-\subsection{Sweep Lines}
+\subsection{Sweep line approach}
 \label{subsec:sweepline}
-\todo{Sweep lines explanation}
+The boids form a graph $G=(V,E)$, where $V$ represents the boids and $E$ contains edges between boids
+that are within a viewing distance $R$ of each other. This graph is updated at each simulation tick
+by updating the positions in $V$ and adjusting the neighbor relationships in $E$. Edges that persist
+or are removed from $E$ are straightforward to update: simply check the new distances and update
+accordingly. The main complexity lies in identifying new edges.
+
+At every frame, the boids must perform a fixed-radius nearest neighbor search to determine their new
+neighbors. Usually, spatial hashing is used, but we have also analyzed the geometric properties
+of the boids in an attempt to optimize the simulation differently. Unfortunately, these findings did
+not result in a practical solution, but are still worth mentioning.
+
+A sweep surface algorithm can be used to scan over data points in lexicographical order (e.g., top
+to bottom). By keeping track of the active boids -- those passed and  within distance $R$ of the sweep
+surface -- we can significantly reduce the search space for neighboring boids. This space can be
+reduced even further by performing spatial queries on the active set, limiting comparisons to boids
+within a $2R \times 2R \times 2R$ query box around the boid of interest.
+
+To support this, we would need a spatial data structure capable of efficient insertions, deletions,
+and spatial queries. In two dimensions, the sweep state is one-dimensional and can be efficiently
+maintained using a binary search tree. In higher dimensions, a range tree or $k$-d tree could be used.
+However, both structures have costly insertion and deletion operations, and maintaining balance is
+non-trivial. Additionally, these structures rely on pointers, making them less suitable for GPU
+execution. Since spatial hashing also reduces the search space and performs well on GPUs, we opted
+for that approach.
 
 \subsection{Stigmergy}
 \label{subsec:stigmergy}
@@ -478,9 +501,30 @@ GPU & Intel Iris Xe Graphics \\
 \subsection*{Kian Hamidi}
 % Kian's contribution and self-reflection
 
-I entered the project with a strong foundation in WebGPU, Three.js, and flocking algorithms, which allowed me to hit the ground running on the core architecture from the very first week. My primary goal was to ensure the simulation could scale efficiently to meet our ambitious performance targets. To achieve this, I focused heavily on the technical implementation of the spatial hashing logic, which was critical for moving the computational burden of neighbor detection onto the GPU. To validate our progress, I also developed a comprehensive benchmarking and reporting system. This tool allowed us to move beyond anecdotal observations by capturing standardized metrics, such as 1\% low FPS counts and automated LaTeX tables, providing a data-driven backbone for our results section. I also dedicated significant time to researching and prototyping a Stigmergy-based system for global interactivity. Although this remained in the experimental phase due to time constraints and specific visual artifacts—where boids would cluster at the edges of grid slices—the research was invaluable for understanding the limitations and synchronization challenges of our spatial grid.
+I entered the project with a strong foundation in WebGPU, Three.js, and flocking algorithms, which
+allowed me to hit the ground running on the core architecture from the very first week. My primary
+goal was to ensure the simulation could scale efficiently to meet our ambitious performance targets.
+To achieve this, I focused heavily on the technical implementation of the spatial hashing logic, which
+was critical for moving the computational burden of neighbor detection onto the GPU. To validate our
+progress, I also developed a comprehensive benchmarking and reporting system. This tool allowed us
+to move beyond anecdotal observations by capturing standardized metrics, such as 1\% low FPS counts
+and automated LaTeX tables, providing a data-driven backbone for our results section. I also dedicated
+significant time to researching and prototyping a Stigmergy-based system for global interactivity.
+Although this remained in the experimental phase due to time constraints and specific visual
+artifacts—where boids would cluster at the edges of grid slices—the research was invaluable for
+understanding the limitations and synchronization challenges of our spatial grid.
 
-Beyond the initial implementation, I served as the primary debugger for our WGSL shaders, navigating the complexities of parallel programming to resolve technical hurdles that are often difficult to track in a web environment. Reflecting on the project as a whole, I was incredibly impressed by our team's efficiency. We managed to produce a functional "MVP" very early in the cycle, which significantly reduced the typical end-of-project pressure and gave us the freedom to focus on high-level optimizations and feature expansion. I found it particularly rewarding that every member of the group possessed a high level of general programming fluency. This shared technical competence made merging diverse feature branches and troubleshooting across the codebase a low-friction, collaborative experience. The synergy between our different perspectives, combined with an open line of communication and a collective eagerness to learn, made this one of the most positive team experiences I have had. I am very proud of the cohesive, high-performance system we were able to build together.
+Beyond the initial implementation, I served as the primary debugger for our WGSL shaders, navigating
+the complexities of parallel programming to resolve technical hurdles that are often difficult to
+track in a web environment. Reflecting on the project as a whole, I was incredibly impressed by our
+team's efficiency. We managed to produce a functional "MVP" very early in the cycle, which significantly
+reduced the typical end-of-project pressure and gave us the freedom to focus on high-level optimizations
+and feature expansion. I found it particularly rewarding that every member of the group possessed a
+high level of general programming fluency. This shared technical competence made merging diverse
+feature branches and troubleshooting across the codebase a low-friction, collaborative experience.
+The synergy between our different perspectives, combined with an open line of communication and a
+collective eagerness to learn, made this one of the most positive team experiences I have had. I am
+very proud of the cohesive, high-performance system we were able to build together.
 
 \subsection*{Alex Janse}
 % Alex's contribution and self-reflection
@@ -516,11 +560,33 @@ sure how we want to create things before getting stuck with bad achitecture.
 
 \subsection*{Antonio Sato}
 % Antonio's contribution and self-reflection
-I came to this project with very little experience with JavaScript, three.js and HTML, and no prior experience with GPU programming. For what was relevant for this project, I had only previously worked directly with GLSL in the implementation of vertex and fragment shaders. For this reason, I felt that I wasn't able to do much at the beginning, while the team set up the project, as I still needed to learn the basics. At first, I found myself most useful during our group meetings, when we mostly discussed the overall details of the project, rather than direct implementations, as I was able to find literature on the relevant topics and discuss our goals for the project. 
+I came to this project with very little experience with JavaScript, three.js and HTML, and no prior
+experience with GPU programming. For what was relevant for this project, I had only previously worked
+directly with GLSL in the implementation of vertex and fragment shaders. For this reason, I felt that
+I wasn't able to do much at the beginning, while the team set up the project, as I still needed to
+learn the basics. At first, I found myself most useful during our group meetings, when we mostly
+discussed the overall details of the project, rather than direct implementations, as I was able to
+find literature on the relevant topics and discuss our goals for the project. 
 
-The group was very efficient during the first couple of weeks, meaning that we already had a simulation running and a functional UI. My main contribution during this part was connecting the modifiable parameters in the UI to the WebGPU pipeline. Further along the line, I attempted implementing an approximate nearest-neighbours search in the GPU \cite{leite2012nearest} in order to optimize the efficiency of the program, but it turned out to not have any meaningful impact on our results. I also experimented with different shapes for the bounding box (e.g. sphere, torus) and added the EXR background to the program, instead of a blank one. Lastly, I implemented a functionality to change vary the color of each boid based on its starting position, as a way to observe how the starting position of boids affected their position and behaviour further into the simulation. I was also responsible for setting up the report and bibliography, and proof-reading.
+The group was very efficient during the first couple of weeks, meaning that we already had a simulation
+running and a functional UI. My main contribution during this part was connecting the modifiable
+parameters in the UI to the WebGPU pipeline. Further along the line, I attempted implementing an
+approximate nearest-neighbours search in the GPU \cite{leite2012nearest} in order to optimize the
+efficiency of the program, but it turned out to not have any meaningful impact on our results. I also
+experimented with different shapes for the bounding box (e.g. sphere, torus) and added the EXR
+background to the program, instead of a blank one. Lastly, I implemented a functionality to change
+vary the color of each boid based on its starting position, as a way to observe how the starting
+position of boids affected their position and behaviour further into the simulation. I was also
+responsible for setting up the report and bibliography, and proof-reading.
 
-I believe I could have been more helpful to the team had I communicated better early on in the project and asked for help earlier in how to implement certain systems, as I spent a lot of my time trying to understand the inner-workings of the program until I was able to attempt implementing things. I felt overwhelmed at first, since everyone in the group seemed very knowledgeable of the tools and knew where to start, and once I started properly communicating (about 1.5 to 2 weeks in) most of the basic functionalities had already been implemented. I still feel I was helpful and could contribute during group meetings, and I believe I understand our implementation very well and could reproduce it given enough time, but looking back made me realize I could have started being helpful earlier on.
+I believe I could have been more helpful to the team had I communicated better early on in the project
+and asked for help earlier in how to implement certain systems, as I spent a lot of my time trying
+to understand the inner-workings of the program until I was able to attempt implementing things. I
+felt overwhelmed at first, since everyone in the group seemed very knowledgeable of the tools and
+knew where to start, and once I started properly communicating (about 1.5 to 2 weeks in) most of the
+basic functionalities had already been implemented. I still feel I was helpful and could contribute
+during group meetings, and I believe I understand our implementation very well and could reproduce it
+given enough time, but looking back made me realize I could have started being helpful earlier on.
 
 \break
 \nocite{*}
